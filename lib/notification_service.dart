@@ -2,23 +2,23 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
-enum ReminderFrequency { daily, weekly, monthly }
-
 const int reminderNotificationId = 1;
 
+/// Schedules the monthly investing reminder. It fires once on the
+/// configured day of the month, then repeats every day at the same time
+/// (native scheduling, works even if the app is closed) until [confirm] is
+/// called, at which point it's rescheduled for next month's day.
 class NotificationService {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
 
-  final FlutterLocalNotificationsPlugin _plugin =
-      FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
 
   Future<void> init() async {
     tz_data.initializeTimeZones();
     tz.setLocalLocation(tz.getLocation(await _localTimeZoneName()));
 
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings();
     const settings = InitializationSettings(
       android: androidSettings,
@@ -39,10 +39,9 @@ class NotificationService {
 
   Future<bool> requestPermissions() async {
     final androidPlugin =
-        _plugin.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    final iosPlugin = _plugin.resolvePlatformSpecificImplementation<
-        IOSFlutterLocalNotificationsPlugin>();
+        _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    final iosPlugin =
+        _plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
 
     bool granted = true;
     if (androidPlugin != null) {
@@ -59,32 +58,36 @@ class NotificationService {
     return granted;
   }
 
-  tz.TZDateTime _nextInstance(int hour, int minute, ReminderFrequency freq) {
+  /// Next time the reminder should fire: the configured day of this month,
+  /// unless it has already passed or this month's investment is already
+  /// done — in which case, that day next month.
+  tz.TZDateTime _nextOccurrence({
+    required int dayOfMonth,
+    required int hour,
+    required int minute,
+    required bool alreadyDoneThisMonth,
+  }) {
     final now = tz.TZDateTime.now(tz.local);
-    var scheduled =
-        tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+    var candidate = _clampedDate(now.year, now.month, dayOfMonth, hour, minute);
 
-    if (scheduled.isBefore(now)) {
-      switch (freq) {
-        case ReminderFrequency.daily:
-          scheduled = scheduled.add(const Duration(days: 1));
-          break;
-        case ReminderFrequency.weekly:
-          scheduled = scheduled.add(const Duration(days: 7));
-          break;
-        case ReminderFrequency.monthly:
-          scheduled = tz.TZDateTime(
-              tz.local, now.year, now.month + 1, now.day, hour, minute);
-          break;
-      }
+    if (alreadyDoneThisMonth || candidate.isBefore(now)) {
+      final nextMonth = now.month == 12 ? 1 : now.month + 1;
+      final nextMonthYear = now.month == 12 ? now.year + 1 : now.year;
+      candidate = _clampedDate(nextMonthYear, nextMonth, dayOfMonth, hour, minute);
     }
-    return scheduled;
+    return candidate;
+  }
+
+  tz.TZDateTime _clampedDate(int year, int month, int day, int hour, int minute) {
+    final daysInMonth = DateTime(year, month + 1, 0).day;
+    return tz.TZDateTime(tz.local, year, month, day.clamp(1, daysInMonth), hour, minute);
   }
 
   Future<void> scheduleReminder({
+    required int dayOfMonth,
     required int hour,
     required int minute,
-    required ReminderFrequency frequency,
+    required bool alreadyDoneThisMonth,
   }) async {
     await _plugin.cancel(id: reminderNotificationId);
 
@@ -100,27 +103,21 @@ class NotificationService {
       macOS: DarwinNotificationDetails(),
     );
 
-    DateTimeComponents? matchComponents;
-    switch (frequency) {
-      case ReminderFrequency.daily:
-        matchComponents = DateTimeComponents.time;
-        break;
-      case ReminderFrequency.weekly:
-        matchComponents = DateTimeComponents.dayOfWeekAndTime;
-        break;
-      case ReminderFrequency.monthly:
-        matchComponents = DateTimeComponents.dayOfMonthAndTime;
-        break;
-    }
-
     await _plugin.zonedSchedule(
       id: reminderNotificationId,
       title: 'Il est temps d\'investir 💰',
-      body: 'N\'oublie pas ton versement sur ton ETF aujourd\'hui.',
-      scheduledDate: _nextInstance(hour, minute, frequency),
+      body: 'Ouvre l\'appli pour voir le montant exact à virer sur ton PEA ce mois-ci.',
+      scheduledDate: _nextOccurrence(
+        dayOfMonth: dayOfMonth,
+        hour: hour,
+        minute: minute,
+        alreadyDoneThisMonth: alreadyDoneThisMonth,
+      ),
       notificationDetails: details,
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      matchDateTimeComponents: matchComponents,
+      // Repeats daily at the same time, starting from scheduledDate — this
+      // is what turns the monthly reminder into a daily nag until confirmed.
+      matchDateTimeComponents: DateTimeComponents.time,
     );
   }
 
