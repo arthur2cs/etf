@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'notification_service.dart';
 import 'screens/home_screen.dart';
@@ -7,6 +8,18 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Tints the Android system navigation bar (3-button/gesture area) to match
+  // the app's own background — left alone, it defaults to a stark white/gray
+  // strip that clashes with the cream theme instead of blending into it.
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      systemNavigationBarColor: AppColors.cream,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarDividerColor: Colors.transparent,
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+    ),
+  );
   await NotificationService.instance.init();
   final repository = PortfolioRepository();
   await repository.init();
@@ -58,6 +71,7 @@ class _ETFReminderAppState extends State<ETFReminderApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'ETF Reminder',
+      debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       navigatorKey: notificationNavigatorKey,
       home: ListenableBuilder(

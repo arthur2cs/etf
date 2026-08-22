@@ -64,7 +64,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.asset('assets/icon/renard_icon.png', width: 36, height: 36),
+              child: Image.asset('assets/icon/renard.png', width: 36, height: 36),
             ),
             const SizedBox(width: 10),
             const Text('Suivi PEA'),
@@ -93,7 +93,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           await repo.refreshPrices();
         },
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(16, 16, 16, bottomSafePadding(context)),
           children: [
             if (_notificationIssue) _NotificationWarningCard(repo: repo),
             if (!repo.isSignedIn) _SignInCard(repo: repo),

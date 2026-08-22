@@ -27,11 +27,6 @@ class NotificationService {
 
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
 
-  /// Set if the last [scheduleReminder] call hit an error actually
-  /// arming the native alarm (as opposed to a Dart-side misconfiguration)
-  /// — surfaced in Settings so a silently-failed schedule isn't invisible.
-  String? lastScheduleError;
-
   Future<void> init() async {
     tz_data.initializeTimeZones();
     final zoneName = await _localTimeZoneName();
@@ -186,7 +181,6 @@ class NotificationService {
     required bool alreadyDoneThisMonth,
   }) async {
     await _plugin.cancel(id: reminderNotificationId);
-    lastScheduleError = null;
 
     final scheduledDate = nextOccurrence(
       dayOfMonth: dayOfMonth,
@@ -219,23 +213,11 @@ class NotificationService {
       );
       debugPrint('[NotificationService] zonedSchedule call returned without throwing.');
     } catch (e) {
-      lastScheduleError = e.toString();
       debugPrint('[NotificationService] zonedSchedule threw: $e');
     }
   }
 
   Future<void> cancelReminder() async {
     await _plugin.cancel(id: reminderNotificationId);
-  }
-
-  Future<List<PendingNotificationRequest>> pending() {
-    return _plugin.pendingNotificationRequests();
-  }
-
-  /// Whether the OS actually has the reminder armed right now — the real
-  /// ground truth, as opposed to inferring it from settings/permissions.
-  Future<bool> isReminderScheduled() async {
-    final list = await pending();
-    return list.any((p) => p.id == reminderNotificationId);
   }
 }

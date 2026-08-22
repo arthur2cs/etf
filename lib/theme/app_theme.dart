@@ -35,6 +35,13 @@ class AppColors {
   }
 }
 
+/// Extra breathing room below the last item on a scrollable screen, on top
+/// of the system's own bottom inset. On Android's 3-button navigation bar,
+/// the swipe-up-to-recents gesture area extends a bit above the buttons
+/// themselves (roughly half a button's height) — padding equal to just the
+/// system inset still leaves content reachable by that gesture.
+double bottomSafePadding(BuildContext context) => MediaQuery.of(context).padding.bottom + 24;
+
 /// Groovy, soft, generous: big rounded shapes, warm shadows, a rounded
 /// friendly display font, and a black-on-orange duotone for primary
 /// actions (white-on-orange fails contrast — see theme notes below).

@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
 import '../models/etf.dart';
 import '../notification_service.dart';
 import '../services/portfolio_repository.dart';
-
-final _dateTimeFmt = DateFormat('dd/MM/yyyy à HH:mm');
+import '../theme/app_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
   final PortfolioRepository repository;
@@ -15,13 +13,10 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObserver {
+class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _budgetController;
   late final TextEditingController _minOrderController;
   late final TextEditingController _commissionRateController;
-
-  bool? _notificationsEnabled;
-  bool? _reminderActuallyScheduled;
 
   @override
   void initState() {
@@ -30,34 +25,14 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     _budgetController = TextEditingController(text: repo.monthlyBudget.toStringAsFixed(0));
     _minOrderController = TextEditingController(text: repo.minOrderAmount.toStringAsFixed(0));
     _commissionRateController = TextEditingController(text: repo.commissionRatePct.toStringAsFixed(2));
-    WidgetsBinding.instance.addObserver(this);
-    _refreshNotificationStatus();
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _budgetController.dispose();
     _minOrderController.dispose();
     _commissionRateController.dispose();
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Catches coming back from the system "Alarms & reminders" / app
-    // notification settings screens, which happen outside the app.
-    if (state == AppLifecycleState.resumed) _refreshNotificationStatus();
-  }
-
-  Future<void> _refreshNotificationStatus() async {
-    final notificationsEnabled = await NotificationService.instance.areNotificationsEnabled();
-    final scheduled = await NotificationService.instance.isReminderScheduled();
-    if (!mounted) return;
-    setState(() {
-      _notificationsEnabled = notificationsEnabled;
-      _reminderActuallyScheduled = scheduled;
-    });
   }
 
   @override
@@ -75,7 +50,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
     return Scaffold(
       appBar: AppBar(title: const Text('Réglages')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, bottomSafePadding(context)),
         children: [
           Text('ETF suivis', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
@@ -88,23 +63,26 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
               ),
             ),
           for (final etf in repo.etfs)
-            Card(
-              child: ListTile(
-                title: Text(etf.name.isEmpty ? etf.isin : etf.name),
-                subtitle: Text('${etf.isin} · ${etf.category}'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('${etf.targetPct.toStringAsFixed(0)}%'),
-                    IconButton(
-                      icon: const Icon(Icons.edit),
-                      onPressed: () => _openEtfDialog(context, existing: etf),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () => repo.removeEtf(etf.isin),
-                    ),
-                  ],
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Card(
+                child: ListTile(
+                  title: Text(etf.name.isEmpty ? etf.isin : etf.name),
+                  subtitle: Text('${etf.isin} · ${etf.category}'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('${etf.targetPct.toStringAsFixed(0)}%'),
+                      IconButton(
+                        icon: const Icon(Icons.edit),
+                        onPressed: () => _openEtfDialog(context, existing: etf),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => repo.removeEtf(etf.isin),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -187,60 +165,7 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
             ),
           ),
           if (repo.reminderEnabled) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Prochain rappel : ${_dateTimeFmt.format(NotificationService.instance.nextOccurrence(
-                      dayOfMonth: repo.reminderDay,
-                      hour: repo.reminderHour,
-                      minute: repo.reminderMinute,
-                      alreadyDoneThisMonth: repo.monthPlanComplete,
-                    ))}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, size: 20),
-                  tooltip: 'Rafraîchir les diagnostics',
-                  onPressed: _refreshNotificationStatus,
-                ),
-              ],
-            ),
-            if (_reminderActuallyScheduled != null)
-              Text(
-                _reminderActuallyScheduled!
-                    ? 'Rappel bien enregistré auprès du système ✅'
-                    : 'Rappel PAS enregistré auprès du système ⚠️',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _reminderActuallyScheduled!
-                          ? Colors.green
-                          : Theme.of(context).colorScheme.error,
-                    ),
-              ),
-            if (NotificationService.instance.lastScheduleError != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'Erreur lors de la dernière programmation : '
-                  '${NotificationService.instance.lastScheduleError}',
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
             const SizedBox(height: 12),
-            _NotificationStatusTile(
-              label: 'Notifications',
-              enabled: _notificationsEnabled,
-              onFix: () async {
-                await NotificationService.instance.requestPermissions();
-                await _refreshNotificationStatus();
-              },
-            ),
-            const SizedBox(height: 8),
             OutlinedButton.icon(
               icon: const Icon(Icons.notifications_active_outlined),
               label: const Text('Envoyer une notification de test'),
@@ -307,34 +232,5 @@ class _SettingsScreenState extends State<SettingsScreen> with WidgetsBindingObse
       );
       await repo.addOrUpdateEtf(etf);
     }
-  }
-}
-
-class _NotificationStatusTile extends StatelessWidget {
-  final String label;
-  final bool? enabled;
-  final VoidCallback onFix;
-
-  const _NotificationStatusTile({
-    required this.label,
-    required this.enabled,
-    required this.onFix,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final error = Theme.of(context).colorScheme.error;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: enabled == null
-          ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-          : Icon(
-              enabled! ? Icons.check_circle : Icons.warning_amber_rounded,
-              color: enabled! ? Colors.green : error,
-            ),
-      title: Text(label),
-      subtitle: enabled == false ? const Text('Désactivé — le rappel ne sonnera pas fiablement.') : null,
-      trailing: enabled == false ? TextButton(onPressed: onFix, child: const Text('Activer')) : null,
-    );
   }
 }
