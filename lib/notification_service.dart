@@ -33,7 +33,11 @@ class NotificationService {
     tz.setLocalLocation(tz.getLocation(zoneName));
     debugPrint('[NotificationService] local timezone resolved to $zoneName');
 
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    // The status-bar/notification-tray icon must be a flat white silhouette
+    // on transparent — Android strips color and draws only the alpha
+    // channel, so the full-color launcher icon rendered as a blank white
+    // slot there (it's opaque everywhere, alpha=1 across the whole square).
+    const androidSettings = AndroidInitializationSettings('@drawable/ic_stat_notify');
     const iosSettings = DarwinInitializationSettings();
     const settings = InitializationSettings(
       android: androidSettings,
