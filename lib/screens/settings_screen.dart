@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../models/etf.dart';
-import '../notification_service.dart';
 import '../services/portfolio_repository.dart';
 import '../theme/app_theme.dart';
 
@@ -188,15 +187,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
-        if (repo.reminderEnabled) ...[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.notifications_active_outlined),
-            label: const Text('Envoyer une notification de test'),
-            onPressed: () =>
-                NotificationService.instance.showTestNotification(),
-          ),
-        ],
+        // Test-notification button removed from the UI —
+        // NotificationService.showTestNotification() is kept as-is so it's
+        // a re-add of the import below plus this button away from coming
+        // back if notifications need debugging again:
+        //   import '../notification_service.dart';
+        //   OutlinedButton.icon(
+        //     icon: const Icon(Icons.notifications_active_outlined),
+        //     label: const Text('Envoyer une notification de test'),
+        //     onPressed: () => NotificationService.instance.showTestNotification(),
+        //   ),
       ],
     );
   }
