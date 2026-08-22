@@ -46,118 +46,114 @@ class _StatsScreenState extends State<StatsScreen> {
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: widget.repository,
-      builder: (context, _) => _buildScaffold(context),
+      builder: (context, _) => _buildBody(context),
     );
   }
 
-  Widget _buildScaffold(BuildContext context) {
+  Widget _buildBody(BuildContext context) {
     final repo = widget.repository;
     final transactions = [...repo.transactions]
       ..sort((a, b) => a.date.compareTo(b.date));
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Stats & projections')),
-      body: ListView(
-        padding: EdgeInsets.fromLTRB(16, 16, 16, bottomSafePadding(context)),
-        children: [
-          Text(
-            'Historique des versements',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          if (transactions.isEmpty)
-            const Text('Pas encore de transaction enregistrée.')
-          else
-            _HistoryChart(transactions: transactions),
-          const Divider(height: 32),
-          Text('Projection', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Rendement annuel : ${_annualReturnPct.toStringAsFixed(1)}%',
-                    ),
-                    Slider(
-                      value: _annualReturnPct,
-                      min: 0,
-                      max: 12,
-                      divisions: 24,
-                      label: '${_annualReturnPct.toStringAsFixed(1)}%',
-                      onChanged: (v) => setState(() => _annualReturnPct = v),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Horizon : $_horizonYears ans'),
-                    Slider(
-                      value: _horizonYears.toDouble(),
-                      min: 1,
-                      max: 30,
-                      divisions: 29,
-                      label: '$_horizonYears ans',
-                      onChanged: (v) =>
-                          setState(() => _horizonYears = v.round()),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          Builder(
-            builder: (context) {
-              final projected = _projectFutureValue(
-                presentValue: repo.totalInvested,
-                monthlyContribution: repo.monthlyBudget,
-                annualRatePct: _annualReturnPct,
-                months: _horizonYears * 12,
-              );
-              return Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Center(
-                    child: Text(
-                      _eur.format(projected),
-                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
+    return ListView(
+      padding: EdgeInsets.fromLTRB(16, 16, 16, bottomSafePadding(context)),
+      children: [
+        Text(
+          'Historique des versements',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        if (transactions.isEmpty)
+          const Text('Pas encore de transaction enregistrée.')
+        else
+          _HistoryChart(transactions: transactions),
+        const Divider(height: 32),
+        Text('Projection', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Rendement annuel : ${_annualReturnPct.toStringAsFixed(1)}%',
                   ),
-                ),
-              );
-            },
-          ),
-          const Divider(height: 32),
-          Text(
-            'Pouvoir d\'achat d\'aujourd\'hui',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          _InflationSection(
-            repo: repo,
-            purchasingPower: _projectFutureValueNetOfInflation(
+                  Slider(
+                    value: _annualReturnPct,
+                    min: 0,
+                    max: 12,
+                    divisions: 24,
+                    label: '${_annualReturnPct.toStringAsFixed(1)}%',
+                    onChanged: (v) => setState(() => _annualReturnPct = v),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Horizon : $_horizonYears ans'),
+                  Slider(
+                    value: _horizonYears.toDouble(),
+                    min: 1,
+                    max: 30,
+                    divisions: 29,
+                    label: '$_horizonYears ans',
+                    onChanged: (v) => setState(() => _horizonYears = v.round()),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        Builder(
+          builder: (context) {
+            final projected = _projectFutureValue(
               presentValue: repo.totalInvested,
               monthlyContribution: repo.monthlyBudget,
               annualRatePct: _annualReturnPct,
               months: _horizonYears * 12,
-              inflationRates: repo.inflationRates,
-              from: DateTime.now(),
-            ),
+            );
+            return Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Center(
+                  child: Text(
+                    _eur.format(projected),
+                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        const Divider(height: 32),
+        Text(
+          'Pouvoir d\'achat d\'aujourd\'hui',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 8),
+        _InflationSection(
+          repo: repo,
+          purchasingPower: _projectFutureValueNetOfInflation(
+            presentValue: repo.totalInvested,
+            monthlyContribution: repo.monthlyBudget,
+            annualRatePct: _annualReturnPct,
+            months: _horizonYears * 12,
+            inflationRates: repo.inflationRates,
+            from: DateTime.now(),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

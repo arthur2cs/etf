@@ -15,15 +15,194 @@ final _dateFmt = DateFormat('dd/MM/yyyy');
 
 const _palette = AppColors.chartPalette;
 
+const _pageTitles = ['Stats & projections', 'Suivi PEA', 'Réglages'];
+const _pageIcons = [Icons.bar_chart, Icons.home, Icons.settings];
+
+/// Stock [PageView] physics need a drag past 50% of the page (absent a
+/// real flick) before committing to the next page, and settle with a
+/// fairly soft spring — noticeably less responsive than apps like Snapchat,
+/// which commit after a much shorter drag and settle quickly. Same overall
+/// algorithm as [PageScrollPhysics], just with a lower commit threshold and
+/// a stiffer settle spring.
+class _SnappyPageScrollPhysics extends ScrollPhysics {
+  const _SnappyPageScrollPhysics({super.parent});
+
+  @override
+  _SnappyPageScrollPhysics applyTo(ScrollPhysics? ancestor) =>
+      _SnappyPageScrollPhysics(parent: buildParent(ancestor));
+
+  // vs. stock PageView's implicit 0.5 (must drag past the halfway point).
+  static const _commitFraction = 0.2;
+
+  @override
+  SpringDescription get spring =>
+      SpringDescription.withDampingRatio(mass: 0.5, stiffness: 400, ratio: 1.1);
+
+  double _page(ScrollMetrics position) =>
+      position.pixels / position.viewportDimension;
+
+  double _pixelsForPage(ScrollMetrics position, double page) =>
+      page * position.viewportDimension;
+
+  @override
+  Simulation? createBallisticSimulation(
+    ScrollMetrics position,
+    double velocity,
+  ) {
+    if ((velocity <= 0.0 && position.pixels <= position.minScrollExtent) ||
+        (velocity >= 0.0 && position.pixels >= position.maxScrollExtent)) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    final tolerance = toleranceFor(position);
+    final page = _page(position);
+    double targetPage;
+    if (velocity.abs() > tolerance.velocity) {
+      // A real flick always commits fully in its direction, same as stock.
+      targetPage = (page + (velocity > 0 ? 0.5 : -0.5)).roundToDouble();
+    } else {
+      // No meaningful flick: commit once the drag clears _commitFraction of
+      // the page instead of stock's 50%, otherwise snap back to where the
+      // drag started.
+      final nearest = page.roundToDouble();
+      final offset = page - nearest;
+      targetPage = offset.abs() > _commitFraction
+          ? nearest + offset.sign
+          : nearest;
+    }
+    final target = _pixelsForPage(position, targetPage);
+    if (target != position.pixels) {
+      return ScrollSpringSimulation(
+        spring,
+        position.pixels,
+        target,
+        velocity,
+        tolerance: tolerance,
+      );
+    }
+    return null;
+  }
+}
+
+/// Root screen: a 3-page swipeable carousel (Stats ⇄ Home ⇄ Réglages)
+/// behind a single shared AppBar, instead of Home pushing separate routes
+/// for Stats/Réglages. Home stays the initial/center page (index 1).
 class HomeScreen extends StatefulWidget {
   final PortfolioRepository repository;
   const HomeScreen({super.key, required this.repository});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class HomeScreenState extends State<HomeScreen> {
+  late final PageController _pageController;
+  int _currentPage = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: 1);
+    // So a notification tap can bring the app back to the main page even
+    // if the user had swiped over to Stats/Réglages in the meantime.
+    NotificationService.instance.onNotificationTappedResetHome = () =>
+        _jumpTo(1);
+  }
+
+  @override
+  void dispose() {
+    NotificationService.instance.onNotificationTappedResetHome = null;
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _jumpTo(int page) {
+    _pageController.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final repo = widget.repository;
+    return PopScope(
+      // A single route now backs all 3 pages, so a system back from
+      // Stats/Réglages would otherwise exit the app outright — go back to
+      // the main page first instead, like a normal bottom-nav app would.
+      canPop: _currentPage == 1,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _jumpTo(1);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/icon/renard.png',
+                  width: 36,
+                  height: 36,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  _pageTitles[_currentPage],
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          // No extra horizontal padding around each icon: IconButton already
+          // reserves its own ~48px tap target, and every pixel here narrows
+          // the room left for the title text next to it.
+          actions: [
+            for (var i = 0; i < 3; i++)
+              i == _currentPage
+                  ? IconButton.filled(
+                      icon: Icon(_pageIcons[i]),
+                      onPressed: () => _jumpTo(i),
+                    )
+                  : IconButton(
+                      icon: Icon(_pageIcons[i]),
+                      onPressed: () => _jumpTo(i),
+                    ),
+            const SizedBox(width: 4),
+          ],
+        ),
+        body: PageView(
+          controller: _pageController,
+          // pageSnapping stays true by default only lets PageView wrap a
+          // *stock* PageScrollPhysics around whatever `physics` is set to —
+          // with its own hardcoded 50% commit threshold, taking over the
+          // snap decision entirely regardless of what we pass in. Disabling
+          // it here is what actually lets _SnappyPageScrollPhysics decide.
+          pageSnapping: false,
+          physics: const _SnappyPageScrollPhysics(),
+          onPageChanged: (i) => setState(() => _currentPage = i),
+          children: [
+            StatsScreen(repository: repo),
+            _HomeBody(repository: repo, onOpenSettings: () => _jumpTo(2)),
+            SettingsScreen(repository: repo),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeBody extends StatefulWidget {
+  final PortfolioRepository repository;
+  final VoidCallback onOpenSettings;
+  const _HomeBody({required this.repository, required this.onOpenSettings});
+
+  @override
+  State<_HomeBody> createState() => _HomeBodyState();
+}
+
+class _HomeBodyState extends State<_HomeBody> with WidgetsBindingObserver {
   bool _notificationIssue = false;
 
   @override
@@ -49,7 +228,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (mounted) setState(() => _notificationIssue = false);
       return;
     }
-    final notifsOk = await NotificationService.instance.areNotificationsEnabled();
+    final notifsOk = await NotificationService.instance
+        .areNotificationsEnabled();
     if (!mounted) return;
     setState(() => _notificationIssue = !notifsOk);
   }
@@ -57,52 +237,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final repo = widget.repository;
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.asset('assets/icon/renard.png', width: 36, height: 36),
-            ),
-            const SizedBox(width: 10),
-            const Text('Suivi PEA'),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.bar_chart),
-            tooltip: 'Stats',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => StatsScreen(repository: repo)),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: 'Réglages',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => SettingsScreen(repository: repo)),
-            ),
-          ),
+    return RefreshIndicator(
+      onRefresh: () async {
+        await repo.syncFromSheets();
+        await repo.refreshPrices();
+      },
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(16, 16, 16, bottomSafePadding(context)),
+        children: [
+          if (_notificationIssue)
+            _NotificationWarningCard(onOpenSettings: widget.onOpenSettings),
+          if (!repo.isSignedIn) _SignInCard(repo: repo),
+          if (repo.lastError != null) _ErrorCard(message: repo.lastError!),
+          if (repo.etfs.isNotEmpty) _PieChartCard(repo: repo),
+          const SizedBox(height: 16),
+          _MonthlyPlanCard(repo: repo),
         ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          await repo.syncFromSheets();
-          await repo.refreshPrices();
-        },
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(16, 16, 16, bottomSafePadding(context)),
-          children: [
-            if (_notificationIssue) _NotificationWarningCard(repo: repo),
-            if (!repo.isSignedIn) _SignInCard(repo: repo),
-            if (repo.lastError != null) _ErrorCard(message: repo.lastError!),
-            if (repo.etfs.isNotEmpty) _PieChartCard(repo: repo),
-            const SizedBox(height: 16),
-            _MonthlyPlanCard(repo: repo),
-          ],
-        ),
       ),
     );
   }
@@ -121,7 +271,9 @@ class _SignInCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Connecte ton compte Google pour synchroniser tes données avec Google Sheets.'),
+            const Text(
+              'Connecte ton compte Google pour synchroniser tes données avec Google Sheets.',
+            ),
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: () async {
@@ -129,8 +281,9 @@ class _SignInCard extends StatelessWidget {
                   await repo.signIn();
                 } catch (e) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context)
-                        .showSnackBar(SnackBar(content: Text('Connexion impossible : $e')));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Connexion impossible : $e')),
+                    );
                   }
                 }
               },
@@ -145,8 +298,8 @@ class _SignInCard extends StatelessWidget {
 }
 
 class _NotificationWarningCard extends StatelessWidget {
-  final PortfolioRepository repo;
-  const _NotificationWarningCard({required this.repo});
+  final VoidCallback onOpenSettings;
+  const _NotificationWarningCard({required this.onOpenSettings});
 
   @override
   Widget build(BuildContext context) {
@@ -165,9 +318,7 @@ class _NotificationWarningCard extends StatelessWidget {
             FilledButton.icon(
               icon: const Icon(Icons.settings),
               label: const Text('Ouvrir les réglages'),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => SettingsScreen(repository: repo)),
-              ),
+              onPressed: onOpenSettings,
             ),
           ],
         ),
@@ -184,10 +335,7 @@ class _ErrorCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       color: Theme.of(context).colorScheme.errorContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Text(message),
-      ),
+      child: Padding(padding: const EdgeInsets.all(16), child: Text(message)),
     );
   }
 }
@@ -215,8 +363,10 @@ class _PieChartCard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Text('Capital investi : ${_eur.format(total)}',
-                style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Capital investi : ${_eur.format(total)}',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 12),
             SizedBox(
               height: 200,
@@ -229,11 +379,14 @@ class _PieChartCard extends StatelessWidget {
                       PieChartSectionData(
                         value: holdings[i].investedEur,
                         color: _palette[i % _palette.length],
-                        title: '${(holdings[i].investedEur / total * 100).toStringAsFixed(0)}%',
+                        title:
+                            '${(holdings[i].investedEur / total * 100).toStringAsFixed(0)}%',
                         radius: 70,
                         titleStyle: TextStyle(
                           fontWeight: FontWeight.w700,
-                          color: AppColors.labelColorOn(_palette[i % _palette.length]),
+                          color: AppColors.labelColorOn(
+                            _palette[i % _palette.length],
+                          ),
                         ),
                       ),
                   ],
@@ -282,13 +435,16 @@ class _MonthlyPlanCard extends StatelessWidget {
       return const Card(
         child: Padding(
           padding: EdgeInsets.all(16),
-          child: Text('Ajoute au moins un ETF dans les réglages pour démarrer.'),
+          child: Text(
+            'Ajoute au moins un ETF dans les réglages pour démarrer.',
+          ),
         ),
       );
     }
 
     final now = DateTime.now();
-    final txThisMonth = repo.transactionsInMonth(now)..sort((a, b) => a.date.compareTo(b.date));
+    final txThisMonth = repo.transactionsInMonth(now)
+      ..sort((a, b) => a.date.compareTo(b.date));
 
     MonthlyPlan plan;
     try {
@@ -300,10 +456,7 @@ class _MonthlyPlanCard extends StatelessWidget {
       );
     } catch (e) {
       return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('$e'),
-        ),
+        child: Padding(padding: const EdgeInsets.all(16), child: Text('$e')),
       );
     }
 
@@ -315,9 +468,9 @@ class _MonthlyPlanCard extends StatelessWidget {
             child: Text(
               repo.budgetLeftThisMonth < repo.minOrderAmount
                   ? 'Budget mensuel (${_eur.format(repo.monthlyBudget)}) inférieur au minimum '
-                      'd\'ordre (${_eur.format(repo.minOrderAmount)}) : augmente-le dans les réglages.'
+                        'd\'ordre (${_eur.format(repo.minOrderAmount)}) : augmente-le dans les réglages.'
                   : 'Portefeuille déjà à l\'équilibre par rapport à ta répartition cible — '
-                      'rien à investir de plus ce mois-ci.',
+                        'rien à investir de plus ce mois-ci.',
             ),
           ),
         );
@@ -328,7 +481,10 @@ class _MonthlyPlanCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Ce mois-ci ✅', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Ce mois-ci ✅',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: 8),
               for (final t in txThisMonth)
                 Padding(
@@ -351,7 +507,9 @@ class _MonthlyPlanCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              txThisMonth.isEmpty ? 'Ce mois-ci' : 'Ce mois-ci — encore à faire',
+              txThisMonth.isEmpty
+                  ? 'Ce mois-ci'
+                  : 'Ce mois-ci — encore à faire',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
@@ -390,8 +548,13 @@ class _MonthlyPlanCard extends StatelessWidget {
             const SizedBox(height: 12),
             FilledButton.icon(
               icon: const Icon(Icons.check),
-              label: Text(plan.purchases.length > 1 ? "J'ai fait les transactions" : "J'ai fait la transaction"),
-              onPressed: () => _confirmTransactions(context, repo, plan.purchases),
+              label: Text(
+                plan.purchases.length > 1
+                    ? "J'ai fait les transactions"
+                    : "J'ai fait la transaction",
+              ),
+              onPressed: () =>
+                  _confirmTransactions(context, repo, plan.purchases),
             ),
           ],
         ),
@@ -405,16 +568,20 @@ class _MonthlyPlanCard extends StatelessWidget {
     List<PlannedPurchase> purchases,
   ) async {
     final amountControllers = [
-      for (final p in purchases) TextEditingController(text: p.amountEur.toStringAsFixed(2)),
+      for (final p in purchases)
+        TextEditingController(text: p.amountEur.toStringAsFixed(2)),
     ];
     final sharesControllers = [
-      for (final p in purchases) TextEditingController(text: p.shares.toString()),
+      for (final p in purchases)
+        TextEditingController(text: p.shares.toString()),
     ];
     final priceControllers = [
-      for (final p in purchases) TextEditingController(text: p.unitPrice.toStringAsFixed(2)),
+      for (final p in purchases)
+        TextEditingController(text: p.unitPrice.toStringAsFixed(2)),
     ];
     final commissionControllers = [
-      for (final p in purchases) TextEditingController(text: p.commissionEur.toStringAsFixed(2)),
+      for (final p in purchases)
+        TextEditingController(text: p.commissionEur.toStringAsFixed(2)),
     ];
     DateTime date = DateTime.now();
 
@@ -436,7 +603,9 @@ class _MonthlyPlanCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    purchases.length > 1 ? 'Confirmer les transactions' : 'Confirmer la transaction',
+                    purchases.length > 1
+                        ? 'Confirmer les transactions'
+                        : 'Confirmer la transaction',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 8),
@@ -456,26 +625,45 @@ class _MonthlyPlanCard extends StatelessWidget {
                   ),
                   for (var i = 0; i < purchases.length; i++) ...[
                     const Divider(height: 24),
-                    Text(purchases[i].etf.name, style: Theme.of(context).textTheme.titleSmall),
+                    Text(
+                      purchases[i].etf.name,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
                     TextField(
                       controller: amountControllers[i],
-                      decoration: const InputDecoration(labelText: 'Montant (€)'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Montant (€)',
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                     ),
                     TextField(
                       controller: sharesControllers[i],
-                      decoration: const InputDecoration(labelText: "Nombre d'actions"),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: "Nombre d'actions",
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                     ),
                     TextField(
                       controller: priceControllers[i],
-                      decoration: const InputDecoration(labelText: 'Prix unitaire (€)'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Prix unitaire (€)',
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                     ),
                     TextField(
                       controller: commissionControllers[i],
-                      decoration: const InputDecoration(labelText: 'Commission (€)'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Commission (€)',
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                     ),
                   ],
                   const SizedBox(height: 16),
@@ -495,21 +683,29 @@ class _MonthlyPlanCard extends StatelessWidget {
       for (var i = 0; i < purchases.length; i++) {
         final purchase = purchases[i];
         final amount =
-            double.tryParse(amountControllers[i].text.replaceAll(',', '.')) ?? purchase.amountEur;
-        final shares = double.tryParse(sharesControllers[i].text.replaceAll(',', '.')) ??
+            double.tryParse(amountControllers[i].text.replaceAll(',', '.')) ??
+            purchase.amountEur;
+        final shares =
+            double.tryParse(sharesControllers[i].text.replaceAll(',', '.')) ??
             purchase.shares.toDouble();
         final price =
-            double.tryParse(priceControllers[i].text.replaceAll(',', '.')) ?? purchase.unitPrice;
-        final commission = double.tryParse(commissionControllers[i].text.replaceAll(',', '.')) ??
+            double.tryParse(priceControllers[i].text.replaceAll(',', '.')) ??
+            purchase.unitPrice;
+        final commission =
+            double.tryParse(
+              commissionControllers[i].text.replaceAll(',', '.'),
+            ) ??
             purchase.commissionEur;
-        await repo.addTransaction(InvestmentTransaction(
-          date: date,
-          isin: purchase.etf.isin,
-          amountEur: amount,
-          unitPrice: price,
-          shares: shares,
-          commissionEur: commission,
-        ));
+        await repo.addTransaction(
+          InvestmentTransaction(
+            date: date,
+            isin: purchase.etf.isin,
+            amountEur: amount,
+            unitPrice: price,
+            shares: shares,
+            commissionEur: commission,
+          ),
+        );
       }
     }
   }

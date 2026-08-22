@@ -13,9 +13,10 @@ const int reminderNotificationId = 1;
 const _channelId = 'invest_reminder_channel_v2';
 
 /// Navigator key shared with the app's MaterialApp, so a notification tap
-/// can pop back to the home screen even if some other screen (Réglages,
-/// Stats) was open when it fired.
-final GlobalKey<NavigatorState> notificationNavigatorKey = GlobalKey<NavigatorState>();
+/// can pop back to the home screen even if some other screen (a dialog, a
+/// bottom sheet) was open when it fired.
+final GlobalKey<NavigatorState> notificationNavigatorKey =
+    GlobalKey<NavigatorState>();
 
 /// Schedules the monthly investing reminder. It fires once on the
 /// configured day of the month, then repeats every day at the same time
@@ -25,7 +26,14 @@ class NotificationService {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
 
-  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
+
+  /// Set by [HomeScreen] once mounted, so a notification tap can also reset
+  /// the swipeable home screen back to its main page — Stats/Réglages are
+  /// pages of the same route now, not separate ones `notificationNavigatorKey`
+  /// could pop back from.
+  VoidCallback? onNotificationTappedResetHome;
 
   Future<void> init() async {
     tz_data.initializeTimeZones();
@@ -37,7 +45,9 @@ class NotificationService {
     // on transparent — Android strips color and draws only the alpha
     // channel, so the full-color launcher icon rendered as a blank white
     // slot there (it's opaque everywhere, alpha=1 across the whole square).
-    const androidSettings = AndroidInitializationSettings('@drawable/ic_stat_notify');
+    const androidSettings = AndroidInitializationSettings(
+      '@drawable/ic_stat_notify',
+    );
     const iosSettings = DarwinInitializationSettings();
     const settings = InitializationSettings(
       android: androidSettings,
@@ -52,9 +62,10 @@ class NotificationService {
 
   void _onNotificationTapped(NotificationResponse response) {
     debugPrint('[NotificationService] notification tapped: id=${response.id}');
-    // Land back on the home screen regardless of which screen was open —
-    // the home screen is where the month's plan and confirm button live.
+    // Land back on the home page regardless of which page/screen was open —
+    // that's where the month's plan and confirm button live.
     notificationNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+    onNotificationTappedResetHome?.call();
   }
 
   Future<String> _localTimeZoneName() async {
@@ -73,17 +84,22 @@ class NotificationService {
   }
 
   Future<bool> requestPermissions() async {
-    final androidPlugin =
-        _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    final iosPlugin =
-        _plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    final iosPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin
+        >();
 
     bool granted = true;
     if (androidPlugin != null) {
       granted = await androidPlugin.requestNotificationsPermission() ?? true;
     }
     if (iosPlugin != null) {
-      granted = await iosPlugin.requestPermissions(
+      granted =
+          await iosPlugin.requestPermissions(
             alert: true,
             badge: true,
             sound: true,
@@ -99,8 +115,10 @@ class NotificationService {
   /// it also reflects the user later revoking it from system settings).
   Future<bool> areNotificationsEnabled() async {
     try {
-      final androidPlugin =
-          _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      final androidPlugin = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       if (androidPlugin == null) return true;
       return await androidPlugin.areNotificationsEnabled() ?? false;
     } catch (_) {
@@ -136,35 +154,61 @@ class NotificationService {
       return _clampedDate(nextMonthYear, nextMonth, dayOfMonth, hour, minute);
     }
 
-    final configuredThisMonth = _clampedDate(now.year, now.month, dayOfMonth, hour, minute);
+    final configuredThisMonth = _clampedDate(
+      now.year,
+      now.month,
+      dayOfMonth,
+      hour,
+      minute,
+    );
     if (!configuredThisMonth.isBefore(now)) {
       return configuredThisMonth;
     }
-    var candidate = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+    var candidate = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      hour,
+      minute,
+    );
     if (candidate.isBefore(now)) {
       candidate = candidate.add(const Duration(days: 1));
     }
     return candidate;
   }
 
-  tz.TZDateTime _clampedDate(int year, int month, int day, int hour, int minute) {
+  tz.TZDateTime _clampedDate(
+    int year,
+    int month,
+    int day,
+    int hour,
+    int minute,
+  ) {
     final daysInMonth = DateTime(year, month + 1, 0).day;
-    return tz.TZDateTime(tz.local, year, month, day.clamp(1, daysInMonth), hour, minute);
+    return tz.TZDateTime(
+      tz.local,
+      year,
+      month,
+      day.clamp(1, daysInMonth),
+      hour,
+      minute,
+    );
   }
 
   NotificationDetails _reminderDetails() => const NotificationDetails(
-        android: AndroidNotificationDetails(
-          _channelId,
-          'Rappels d\'investissement',
-          channelDescription: 'Rappelle d\'investir dans ton ETF',
-          importance: Importance.max,
-          priority: Priority.max,
-          category: AndroidNotificationCategory.reminder,
-          visibility: NotificationVisibility.public,
-        ),
-        iOS: DarwinNotificationDetails(),
-        macOS: DarwinNotificationDetails(),
-      );
+    android: AndroidNotificationDetails(
+      _channelId,
+      'Rappels d\'investissement',
+      channelDescription: 'Rappelle d\'investir dans ton ETF',
+      importance: Importance.max,
+      priority: Priority.max,
+      category: AndroidNotificationCategory.reminder,
+      visibility: NotificationVisibility.public,
+    ),
+    iOS: DarwinNotificationDetails(),
+    macOS: DarwinNotificationDetails(),
+  );
 
   /// Shows a notification right away, bypassing the day/month scheduling —
   /// for checking permissions, heads-up display and tap-to-home actually
@@ -173,7 +217,8 @@ class NotificationService {
     await _plugin.show(
       id: reminderNotificationId + 1000,
       title: 'Test du rappel ETF 💰',
-      body: 'Si tu vois ceci en bannière, les notifications fonctionnent. Tape dessus pour tester le retour à l\'accueil.',
+      body:
+          'Si tu vois ceci en bannière, les notifications fonctionnent. Tape dessus pour tester le retour à l\'accueil.',
       notificationDetails: _reminderDetails(),
     );
   }
@@ -203,7 +248,8 @@ class NotificationService {
       await _plugin.zonedSchedule(
         id: reminderNotificationId,
         title: 'Il est temps d\'investir 💰',
-        body: 'Ouvre l\'appli pour voir le montant exact à virer sur ton PEA ce mois-ci.',
+        body:
+            'Ouvre l\'appli pour voir le montant exact à virer sur ton PEA ce mois-ci.',
         scheduledDate: scheduledDate,
         notificationDetails: _reminderDetails(),
         // Inexact is plenty precise for a daily reminder banner, and avoids
@@ -215,7 +261,9 @@ class NotificationService {
         // confirmed.
         matchDateTimeComponents: DateTimeComponents.time,
       );
-      debugPrint('[NotificationService] zonedSchedule call returned without throwing.');
+      debugPrint(
+        '[NotificationService] zonedSchedule call returned without throwing.',
+      );
     } catch (e) {
       debugPrint('[NotificationService] zonedSchedule threw: $e');
     }
