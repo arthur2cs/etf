@@ -8,15 +8,21 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Tints the Android system navigation bar (3-button/gesture area) to match
-  // the app's own background — left alone, it defaults to a stark white/gray
-  // strip that clashes with the cream theme instead of blending into it.
+  // Android 15+ enforces edge-to-edge — app content can draw (and while
+  // scrolling, does draw) underneath the system nav bar's button/gesture
+  // area, and systemNavigationBarColor is deprecated there and simply
+  // ignored. So instead of asking the OS to paint that strip, MaterialApp's
+  // builder below paints an opaque bar over it directly: scrolled content
+  // now disappears behind that bar rather than showing through it.
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
-      systemNavigationBarColor: AppColors.cream,
-      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarContrastEnforced: false,
+      systemNavigationBarIconBrightness: Brightness.light,
       systemNavigationBarDividerColor: Colors.transparent,
       statusBarColor: Colors.transparent,
+      systemStatusBarContrastEnforced: false,
       statusBarIconBrightness: Brightness.dark,
     ),
   );
@@ -74,6 +80,21 @@ class _ETFReminderAppState extends State<ETFReminderApp> {
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       navigatorKey: notificationNavigatorKey,
+      // Pins an opaque bar over the system nav bar's button/gesture area on
+      // every screen, so scrolled content disappears behind it instead of
+      // showing through — see the comment on setEnabledSystemUIMode above.
+      builder: (context, child) => Stack(
+        children: [
+          if (child != null) child,
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: MediaQuery.of(context).viewPadding.bottom,
+            child: const IgnorePointer(child: ColoredBox(color: Colors.black)),
+          ),
+        ],
+      ),
       home: ListenableBuilder(
         listenable: widget.repository,
         builder: (context, _) => HomeScreen(repository: widget.repository),
