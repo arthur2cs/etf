@@ -184,14 +184,65 @@ plusieurs mois.
 
 ### 3.6 Notifications de rappel mensuel
 
-- Le jour J configuré du mois (ex. le 1er), une notification part :
-  "Il est temps d'investir — X € sur [ETF]".
-- Si je n'ai pas confirmé la transaction dans l'appli, la notification
-  revient **tous les jours** jusqu'à confirmation (même appli fermée →
-  planification native via `flutter_local_notifications`, pas un simple
-  timer en mémoire).
-- Dès que je confirme via l'écran principal, les rappels du mois s'arrêtent
-  et se reprogrammeront pour le mois suivant.
+- Le jour J configuré du mois (ex. le 1er), une notification part : "Il est
+  temps d'investir 💰" (le montant précis n'est pas dans la notif — il
+  dépend du prix du jour, calculé à l'ouverture de l'appli).
+- Si le plan du mois n'est pas terminé, la notification revient **tous les
+  jours** jusqu'à ce qu'il le soit (même appli fermée → planification
+  native via `flutter_local_notifications`, pas un simple timer en
+  mémoire). Dès que le plan du mois est complet, les rappels s'arrêtent et
+  se reprogrammeront pour le mois suivant.
+- Si le jour J est déjà passé ce mois-ci sans que le plan soit terminé
+  (arrive seulement en cas de (re)configuration — au fil de l'usage normal,
+  la reprogrammation après confirmation retombe toujours sur une date
+  future), l'appli ne saute **pas** au mois prochain : le rappel se
+  reprogramme pour très bientôt (aujourd'hui ou demain à l'heure
+  configurée). Pas de notification immédiate séparée pour ce cas — c'est
+  redondant avec ça, et compliquait inutilement la logique. Pour tester le
+  rappel sans attendre : régler le jour sur aujourd'hui et l'heure sur dans
+  quelques minutes déclenche le vrai rappel programmé (plus représentatif
+  qu'une notif de test isolée). Un bouton "Envoyer une notification de
+  test" existe aussi dans les réglages pour juste vérifier que
+  permission/bannière/clic fonctionnent sur l'appareil, indépendamment du
+  jour configuré.
+- Alarme **exacte** (`AndroidScheduleMode.exactAllowWhileIdle`) plutôt
+  qu'approximative — sur Android 12+, ça nécessite une permission à part
+  (`SCHEDULE_EXACT_ALARM`) que l'utilisateur doit activer manuellement dans
+  les réglages système (l'appli fournit un raccourci) ; sans ça, l'OS peut
+  retarder ou perdre silencieusement un rappel "inexact", notamment avec
+  l'économiseur de batterie de certains constructeurs Android. L'appli
+  retombe sur le mode inexact si la permission n'est pas accordée, plutôt
+  que d'échouer.
+- Priorité/importance **max** + catégorie "reminder" pour un affichage en
+  bannière (heads-up), comme une notif de SMS.
+- Taper sur la notification ramène toujours sur l'écran d'accueil, même si
+  un autre écran (Réglages, Stats) était ouvert.
+- **Exemption d'optimisation batterie** : même avec la permission d'alarme
+  exacte accordée, un rappel *programmé* peut être tué silencieusement par
+  la gestion batterie agressive de certains constructeurs Android (Xiaomi,
+  Oppo/Vivo, Huawei, Samsung en mode "optimisé", ...) dès que l'appli n'est
+  plus au premier plan — repéré en usage réel : le bouton de notification
+  *immédiate* fonctionnait très bien, la notification *programmée* à une
+  heure précise non. Il n'y a pas de plugin Flutter pour ça, donc un tout
+  petit canal natif Android (`MainActivity.kt`) ouvre l'écran système
+  standard de demande d'exemption (`ACTION_REQUEST_IGNORE_BATTERY_
+  OPTIMIZATIONS`), plutôt que d'ajouter une dépendance entière pour un seul
+  appel.
+- Bannière d'avertissement sur l'écran d'accueil + indicateurs dans les
+  réglages (notifications, alarmes exactes, **et** optimisation batterie)
+  si l'un des trois est désactivé côté OS, avec un raccourci pour l'activer
+  — pour éviter de découvrir silencieusement, un mois plus tard, qu'aucun
+  rappel n'est jamais arrivé.
+- **Diagnostic de la programmation elle-même** : la vérification
+  "puis-je programmer une alarme exacte" côté Dart peut répondre oui alors
+  que l'appel natif échoue quand même au moment réel de la programmation
+  (vu en usage réel) — l'erreur était auparavant silencieuse. Elle est
+  maintenant capturée, affichée telle quelle dans les réglages
+  ("Erreur lors de la dernière programmation : ..."), et un repli
+  automatique sur le mode inexact est tenté plutôt que de ne rien
+  programmer du tout. Un indicateur "Rappel bien enregistré auprès du
+  système" (vérifié via la vraie liste des notifications en attente côté
+  OS, pas déduit) confirme si la programmation a effectivement abouti.
 
 ### 3.7 Écran Stats / Projections
 

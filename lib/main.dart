@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'notification_service.dart';
 import 'screens/home_screen.dart';
-import 'services/allocation_calculator.dart';
 import 'services/portfolio_repository.dart';
 import 'theme/app_theme.dart';
 
@@ -42,33 +41,17 @@ class _ETFReminderAppState extends State<ETFReminderApp> {
       await NotificationService.instance.cancelReminder();
       return;
     }
-    final granted = await NotificationService.instance.requestPermissions();
-    if (!granted) return;
+    // Don't bail out silently if this is false: it only means the *system*
+    // permission dialog was previously denied. We still (re)schedule below
+    // so the reminder is ready to fire the moment the user grants it from
+    // the banner on the home screen.
+    await NotificationService.instance.requestPermissions();
     await NotificationService.instance.scheduleReminder(
       dayOfMonth: repo.reminderDay,
       hour: repo.reminderHour,
       minute: repo.reminderMinute,
-      alreadyDoneThisMonth: _monthPlanComplete(repo),
+      alreadyDoneThisMonth: repo.monthPlanComplete,
     );
-  }
-
-  /// True once there's nothing left to sensibly recommend this month —
-  /// either the remaining budget can't cover another minimum order, or the
-  /// portfolio has already reached its target allocation.
-  bool _monthPlanComplete(PortfolioRepository repo) {
-    if (repo.etfs.isEmpty) return true;
-    if (repo.budgetLeftThisMonth < repo.minOrderAmount) return true;
-    try {
-      final plan = AllocationCalculator().computeMonthlyPlan(
-        holdings: repo.holdings,
-        availableBudget: repo.budgetLeftThisMonth,
-        minOrderAmount: repo.minOrderAmount,
-        commissionRatePct: repo.commissionRatePct,
-      );
-      return plan.purchases.isEmpty;
-    } on AllocationError {
-      return true;
-    }
   }
 
   @override
@@ -76,6 +59,7 @@ class _ETFReminderAppState extends State<ETFReminderApp> {
     return MaterialApp(
       title: 'ETF Reminder',
       theme: buildAppTheme(),
+      navigatorKey: notificationNavigatorKey,
       home: ListenableBuilder(
         listenable: widget.repository,
         builder: (context, _) => HomeScreen(repository: widget.repository),

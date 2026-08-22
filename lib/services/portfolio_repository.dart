@@ -230,4 +230,25 @@ class PortfolioRepository extends ChangeNotifier {
     final spent = transactionsInMonth(DateTime.now()).fold<double>(0, (sum, t) => sum + t.amountEur);
     return monthlyBudget - spent;
   }
+
+  /// True once there's nothing left to sensibly recommend this month —
+  /// either the remaining budget can't cover another minimum order, or the
+  /// portfolio has already reached its target allocation. Used both to
+  /// decide what the home screen shows and to gate the reminder
+  /// notification (it stops nagging once this is true).
+  bool get monthPlanComplete {
+    if (etfs.isEmpty) return true;
+    if (budgetLeftThisMonth < minOrderAmount) return true;
+    try {
+      final plan = AllocationCalculator().computeMonthlyPlan(
+        holdings: holdings,
+        availableBudget: budgetLeftThisMonth,
+        minOrderAmount: minOrderAmount,
+        commissionRatePct: commissionRatePct,
+      );
+      return plan.purchases.isEmpty;
+    } on AllocationError {
+      return true;
+    }
+  }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/investment_transaction.dart';
+import '../notification_service.dart';
 import '../services/allocation_calculator.dart';
 import '../services/portfolio_repository.dart';
 import '../theme/app_theme.dart';
@@ -22,7 +23,37 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  bool _notificationIssue = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _checkNotificationStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkNotificationStatus();
+  }
+
+  Future<void> _checkNotificationStatus() async {
+    if (!widget.repository.reminderEnabled) {
+      if (mounted) setState(() => _notificationIssue = false);
+      return;
+    }
+    final notifsOk = await NotificationService.instance.areNotificationsEnabled();
+    if (!mounted) return;
+    setState(() => _notificationIssue = !notifsOk);
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = widget.repository;
@@ -64,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (_notificationIssue) _NotificationWarningCard(repo: repo),
             if (!repo.isSignedIn) _SignInCard(repo: repo),
             if (repo.lastError != null) _ErrorCard(message: repo.lastError!),
             if (repo.etfs.isNotEmpty) _PieChartCard(repo: repo),
@@ -104,6 +136,38 @@ class _SignInCard extends StatelessWidget {
               },
               icon: const Icon(Icons.login),
               label: const Text('Se connecter avec Google'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationWarningCard extends StatelessWidget {
+  final PortfolioRepository repo;
+  const _NotificationWarningCard({required this.repo});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Le rappel mensuel n\'est pas fiable en l\'état (notifications désactivées) — '
+              'corrige ça dans les réglages sinon tu risques de ne rien recevoir.',
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              icon: const Icon(Icons.settings),
+              label: const Text('Ouvrir les réglages'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => SettingsScreen(repository: repo)),
+              ),
             ),
           ],
         ),
