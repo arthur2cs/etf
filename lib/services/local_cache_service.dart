@@ -19,6 +19,7 @@ const _keyReminderEnabled = 'settings_reminder_enabled';
 const _keyReminderDay = 'settings_reminder_day';
 const _keyReminderHour = 'settings_reminder_hour';
 const _keyReminderMinute = 'settings_reminder_minute';
+const _keyPeriodOverrideStart = 'settings_period_override_start';
 
 /// Local on-device cache: lets the app show data instantly on launch and
 /// keep working offline, while the Google Sheet stays the source of truth
@@ -121,5 +122,23 @@ class LocalCacheService {
     final prefs = await _prefs;
     await prefs.setInt(_keyReminderHour, hour);
     await prefs.setInt(_keyReminderMinute, minute);
+  }
+
+  /// Grandfathered start of the period that was already satisfied under a
+  /// previous reminder-day setting — see
+  /// [PortfolioRepository.currentPeriodStart]. Null once no override is in
+  /// effect (never set, or naturally expired).
+  Future<DateTime?> periodOverrideStart() async {
+    final raw = (await _prefs).getString(_keyPeriodOverrideStart);
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
+
+  Future<void> setPeriodOverrideStart(DateTime? value) async {
+    final prefs = await _prefs;
+    if (value == null) {
+      await prefs.remove(_keyPeriodOverrideStart);
+    } else {
+      await prefs.setString(_keyPeriodOverrideStart, value.toIso8601String());
+    }
   }
 }

@@ -442,39 +442,14 @@ class _MonthlyPlanCard extends StatelessWidget {
       );
     }
 
-    final now = DateTime.now();
-    final txThisMonth = repo.transactionsInMonth(now)
+    final txThisMonth = repo.transactionsInCurrentPeriod
       ..sort((a, b) => a.date.compareTo(b.date));
 
-    MonthlyPlan plan;
-    try {
-      plan = AllocationCalculator().computeMonthlyPlan(
-        holdings: repo.holdings,
-        availableBudget: repo.budgetLeftThisMonth,
-        minOrderAmount: repo.minOrderAmount,
-        commissionRatePct: repo.commissionRatePct,
-      );
-    } catch (e) {
-      return Card(
-        child: Padding(padding: const EdgeInsets.all(16), child: Text('$e')),
-      );
-    }
-
-    if (plan.purchases.isEmpty) {
-      if (txThisMonth.isEmpty) {
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              repo.budgetLeftThisMonth < repo.minOrderAmount
-                  ? 'Budget mensuel (${_eur.format(repo.monthlyBudget)}) inférieur au minimum '
-                        'd\'ordre (${_eur.format(repo.minOrderAmount)}) : augmente-le dans les réglages.'
-                  : 'Portefeuille déjà à l\'équilibre par rapport à ta répartition cible — '
-                        'rien à investir de plus ce mois-ci.',
-            ),
-          ),
-        );
-      }
+    // A transaction recorded this period means the period's done — the
+    // recommended purchase is already optimized for the budget, so
+    // whatever was actually validated (edited amount included) counts,
+    // regardless of whether it exactly matches the plan computed below.
+    if (txThisMonth.isNotEmpty) {
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -500,6 +475,35 @@ class _MonthlyPlanCard extends StatelessWidget {
       );
     }
 
+    MonthlyPlan plan;
+    try {
+      plan = AllocationCalculator().computeMonthlyPlan(
+        holdings: repo.holdings,
+        availableBudget: repo.budgetLeftThisMonth,
+        minOrderAmount: repo.minOrderAmount,
+        commissionRatePct: repo.commissionRatePct,
+      );
+    } catch (e) {
+      return Card(
+        child: Padding(padding: const EdgeInsets.all(16), child: Text('$e')),
+      );
+    }
+
+    if (plan.purchases.isEmpty) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            repo.budgetLeftThisMonth < repo.minOrderAmount
+                ? 'Budget mensuel (${_eur.format(repo.monthlyBudget)}) inférieur au minimum '
+                      'd\'ordre (${_eur.format(repo.minOrderAmount)}) : augmente-le dans les réglages.'
+                : 'Portefeuille déjà à l\'équilibre par rapport à ta répartition cible — '
+                      'rien à investir de plus ce mois-ci.',
+          ),
+        ),
+      );
+    }
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -507,20 +511,10 @@ class _MonthlyPlanCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              txThisMonth.isEmpty
-                  ? 'Ce mois-ci'
-                  : 'Ce mois-ci — encore à faire',
+              'Ce mois-ci',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            for (final t in txThisMonth)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  '✅ Déjà investi le ${_dateFmt.format(t.date)} : ${_eur.format(t.netAmountEur)} sur ${t.isin}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
             Text(
               'Vire ${_eur.format(plan.totalToTransfer)}',
               style: Theme.of(context).textTheme.headlineSmall,

@@ -56,6 +56,7 @@ class PortfolioRepository extends ChangeNotifier {
     reminderDay = await _cache.reminderDay();
     reminderHour = await _cache.reminderHour();
     reminderMinute = await _cache.reminderMinute();
+    periodOverrideStart = await _cache.periodOverrideStart();
     notifyListeners();
 
     try {
@@ -195,6 +196,13 @@ class PortfolioRepository extends ChangeNotifier {
   }
 
   Future<void> setReminderDay(int day) async {
+    if (day != reminderDay && transactionsInCurrentPeriod.isNotEmpty) {
+      // A transaction already covers the period as currently defined —
+      // grandfather that boundary so moving the day doesn't retroactively
+      // erase credit for it (see currentPeriodStart).
+      periodOverrideStart = currentPeriodStart;
+      await _cache.setPeriodOverrideStart(periodOverrideStart);
+    }
     reminderDay = day;
     await _cache.setReminderDay(day);
     notifyListeners();
@@ -220,24 +228,90 @@ class PortfolioRepository extends ChangeNotifier {
           ))
       .toList();
 
-  List<InvestmentTransaction> transactionsInMonth(DateTime month) => transactions
-      .where((t) => t.date.year == month.year && t.date.month == month.month)
-      .toList();
+  /// Clamps [reminderDay] into a real day of the given month, same rule
+  /// [NotificationService.nextOccurrence] uses — so a period boundary here
+  /// always lines up with when the reminder actually rolls over.
+  DateTime _periodStartFor(int year, int month) {
+    final daysInMonth = DateTime(year, month + 1, 0).day;
+    return DateTime(year, month, reminderDay.clamp(1, daysInMonth));
+  }
 
-  /// What's left of this month's budget after transactions already made
-  /// this calendar month — can go negative if more was spent than planned.
+  /// One cycle (one month) after [start], on [reminderDay].
+  DateTime _cycleAfter(DateTime start) {
+    final nextMonth = start.month == 12 ? 1 : start.month + 1;
+    final nextYear = start.month == 12 ? start.year + 1 : start.year;
+    return _periodStartFor(nextYear, nextMonth);
+  }
+
+  /// Start of the investing period containing "now" if [reminderDay] had
+  /// always been what it is right now — i.e. ignoring [periodOverrideStart].
+  DateTime _standardPeriodStart(DateTime now) {
+    final thisMonthStart = _periodStartFor(now.year, now.month);
+    if (!now.isBefore(thisMonthStart)) return thisMonthStart;
+    final prevMonth = now.month == 1 ? 12 : now.month - 1;
+    final prevYear = now.month == 1 ? now.year - 1 : now.year;
+    return _periodStartFor(prevYear, prevMonth);
+  }
+
+  /// Grandfathered period start, set by [setReminderDay] whenever the
+  /// reminder day is changed while the current period was already
+  /// satisfied — so nudging the day earlier/later doesn't retroactively
+  /// erase credit for a transaction already made this cycle. Cleared
+  /// implicitly once [_standardPeriodStart] moves past it (see
+  /// [currentPeriodStart]); not persisted-and-reloaded eagerly, only read
+  /// through [currentPeriodStart].
+  DateTime? periodOverrideStart;
+
+  /// Start of the investing period containing "now", anchored to
+  /// [reminderDay] rather than the calendar month — e.g. reminderDay=10
+  /// means each period runs from the 10th to the next month's 10th. This
+  /// has to match the reminder's own period so a transaction validated
+  /// anywhere in the period is reflected as "done" for the whole period,
+  /// not just until the calendar month happens to roll over.
+  ///
+  /// While [periodOverrideStart] is set and hasn't yet reached its own
+  /// natural end (one cycle after it), it wins over the standard
+  /// computation — see [setReminderDay].
+  DateTime get currentPeriodStart {
+    final now = DateTime.now();
+    final standard = _standardPeriodStart(now);
+    final override = periodOverrideStart;
+    if (override != null && now.isBefore(_cycleAfter(override))) {
+      return override;
+    }
+    return standard;
+  }
+
+  DateTime get _currentPeriodEnd => _cycleAfter(currentPeriodStart);
+
+  List<InvestmentTransaction> get transactionsInCurrentPeriod {
+    final start = currentPeriodStart;
+    final end = _currentPeriodEnd;
+    return transactions
+        .where((t) => !t.date.isBefore(start) && t.date.isBefore(end))
+        .toList();
+  }
+
+  /// What's left of this period's budget after transactions already made
+  /// since [currentPeriodStart] — can go negative if more was spent than
+  /// planned.
   double get budgetLeftThisMonth {
-    final spent = transactionsInMonth(DateTime.now()).fold<double>(0, (sum, t) => sum + t.amountEur);
+    final spent = transactionsInCurrentPeriod.fold<double>(0, (sum, t) => sum + t.amountEur);
     return monthlyBudget - spent;
   }
 
-  /// True once there's nothing left to sensibly recommend this month —
-  /// either the remaining budget can't cover another minimum order, or the
-  /// portfolio has already reached its target allocation. Used both to
-  /// decide what the home screen shows and to gate the reminder
-  /// notification (it stops nagging once this is true).
+  /// True once there's nothing left to do this period — either a
+  /// transaction has already been recorded since [currentPeriodStart]
+  /// (whatever its amount: the recommended purchase is already optimized
+  /// for the budget, so validating it — even edited — counts as "done" for
+  /// the period), or there's nothing sensible to recommend in the first
+  /// place (remaining budget can't cover a minimum order, or the portfolio
+  /// is already at its target allocation). Used both to decide what the
+  /// home screen shows and to gate the reminder notification (it stops
+  /// nagging once this is true).
   bool get monthPlanComplete {
     if (etfs.isEmpty) return true;
+    if (transactionsInCurrentPeriod.isNotEmpty) return true;
     if (budgetLeftThisMonth < minOrderAmount) return true;
     try {
       final plan = AllocationCalculator().computeMonthlyPlan(

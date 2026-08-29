@@ -40,18 +40,32 @@ class ETFReminderApp extends StatefulWidget {
   State<ETFReminderApp> createState() => _ETFReminderAppState();
 }
 
-class _ETFReminderAppState extends State<ETFReminderApp> {
+class _ETFReminderAppState extends State<ETFReminderApp>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.repository.addListener(_syncReminder);
     _syncReminder();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.repository.removeListener(_syncReminder);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-affirm the schedule on every foreground, not just on a cold
+    // start: the app process can survive in the background for days
+    // without ever rebuilding this widget, so without this, reopening it
+    // from the app switcher wouldn't re-check whether the plan is still
+    // complete unless some unrelated repo mutation happened to fire
+    // notifyListeners in between.
+    if (state == AppLifecycleState.resumed) _syncReminder();
   }
 
   Future<void> _syncReminder() async {

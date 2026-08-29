@@ -148,12 +148,6 @@ class NotificationService {
   }) {
     final now = tz.TZDateTime.now(tz.local);
 
-    if (alreadyDoneThisMonth) {
-      final nextMonth = now.month == 12 ? 1 : now.month + 1;
-      final nextMonthYear = now.month == 12 ? now.year + 1 : now.year;
-      return _clampedDate(nextMonthYear, nextMonth, dayOfMonth, hour, minute);
-    }
-
     final configuredThisMonth = _clampedDate(
       now.year,
       now.month,
@@ -161,6 +155,22 @@ class NotificationService {
       hour,
       minute,
     );
+
+    if (alreadyDoneThisMonth) {
+      // This month's occurrence might still be ahead of us — e.g. the app
+      // re-syncs mid-period (day 3, reminder day 10) for a period that was
+      // already satisfied back on day 25 of the *previous* cycle: the next
+      // occurrence is still this month's day 10, not a whole extra month
+      // away. Only actually skip to next month once this month's own
+      // occurrence has already passed.
+      if (!configuredThisMonth.isBefore(now)) {
+        return configuredThisMonth;
+      }
+      final nextMonth = now.month == 12 ? 1 : now.month + 1;
+      final nextMonthYear = now.month == 12 ? now.year + 1 : now.year;
+      return _clampedDate(nextMonthYear, nextMonth, dayOfMonth, hour, minute);
+    }
+
     if (!configuredThisMonth.isBefore(now)) {
       return configuredThisMonth;
     }
@@ -176,6 +186,27 @@ class NotificationService {
       candidate = candidate.add(const Duration(days: 1));
     }
     return candidate;
+  }
+
+  /// Whether [scheduledDate] is "today or tomorrow at hour:minute" — i.e.
+  /// exactly what flutter_local_notifications' own
+  /// getNextFireDateMatchingDateTimeComponents would compute anyway, so
+  /// handing it matchDateTimeComponents doesn't silently pull a further-out
+  /// date back to today (see the comment in [scheduleReminder]).
+  bool _isImminent(tz.TZDateTime scheduledDate, int hour, int minute) {
+    final now = tz.TZDateTime.now(tz.local);
+    var nextTimeOccurrence = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      hour,
+      minute,
+    );
+    if (nextTimeOccurrence.isBefore(now)) {
+      nextTimeOccurrence = nextTimeOccurrence.add(const Duration(days: 1));
+    }
+    return !scheduledDate.isAfter(nextTimeOccurrence);
   }
 
   tz.TZDateTime _clampedDate(
@@ -257,9 +288,32 @@ class NotificationService {
         // for no real benefit — it still fires via AllowWhileIdle even in Doze.
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         // Repeats daily at the same time, starting from scheduledDate —
-        // this is what turns the monthly reminder into a daily nag until
-        // confirmed.
-        matchDateTimeComponents: DateTimeComponents.time,
+        // this is what turns the monthly reminder into a daily nag once
+        // it's actually due.
+        //
+        // Only safe to set once `scheduledDate` IS today/tomorrow (i.e.
+        // the plan isn't done — we're already in the nag window):
+        // flutter_local_notifications' Android side, whenever
+        // matchDateTimeComponents is non-null, throws away the *date* we
+        // pass and recomputes "the next occurrence of this time-of-day
+        // from right now" (see getNextFireDateMatchingDateTimeComponents
+        // in FlutterLocalNotificationsPlugin.java) — so a genuinely future
+        // scheduledDate (next month, once done) would silently collapse
+        // to today/tomorrow and fire immediately instead of waiting.
+        // Confirmed on-device via `adb shell dumpsys alarm`: the armed
+        // alarm's origWhen was today 19:00 even though this method's own
+        // debug log said target=next month.
+        //
+        // So whenever `scheduledDate` is further out than today/tomorrow —
+        // done, waiting for next month, *or* not done but the reminder day
+        // hasn't arrived yet this month — schedule a plain one-shot for
+        // the real future date instead (no repeat metadata at all). It
+        // fires exactly once when that date arrives, and _syncReminder
+        // (main.dart, on every app open/resume) takes over from there to
+        // arm the daily repeat once we're actually in the nag window.
+        matchDateTimeComponents: _isImminent(scheduledDate, hour, minute)
+            ? DateTimeComponents.time
+            : null,
       );
       debugPrint(
         '[NotificationService] zonedSchedule call returned without throwing.',
