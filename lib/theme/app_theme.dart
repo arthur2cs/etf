@@ -122,15 +122,24 @@ ThemeData buildAppTheme() {
       filled: true,
       fillColor: AppColors.cream,
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      border: OutlineInputBorder(
+      // Underline (not outline) border: an OutlineInputBorder floats its
+      // label notched *into* the border line, which only looks right when
+      // the fill shape is cut away to match — ours isn't (filled:true just
+      // paints a plain rounded rect), so the floating label ended up
+      // straddling the top edge of the pale fill instead of sitting
+      // cleanly above or inside it. Underline's floating label sits fully
+      // above the fill with no notch involved, so it doesn't have that
+      // problem — still rounded via borderRadius, still no visible line
+      // via BorderSide.none.
+      border: UnderlineInputBorder(
         borderRadius: BorderRadius.circular(18),
         borderSide: BorderSide.none,
       ),
-      enabledBorder: OutlineInputBorder(
+      enabledBorder: UnderlineInputBorder(
         borderRadius: BorderRadius.circular(18),
         borderSide: BorderSide.none,
       ),
-      focusedBorder: OutlineInputBorder(
+      focusedBorder: UnderlineInputBorder(
         borderRadius: BorderRadius.circular(18),
         borderSide: const BorderSide(color: AppColors.orange, width: 2),
       ),

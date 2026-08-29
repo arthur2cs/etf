@@ -510,10 +510,7 @@ class _MonthlyPlanCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Ce mois-ci',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('Ce mois-ci', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
               'Vire ${_eur.format(plan.totalToTransfer)}',
@@ -577,18 +574,83 @@ class _MonthlyPlanCard extends StatelessWidget {
       for (final p in purchases)
         TextEditingController(text: p.commissionEur.toStringAsFixed(2)),
     ];
+    final priceFocusNodes = [for (final _ in purchases) FocusNode()];
+    final sharesFocusNodes = [for (final _ in purchases) FocusNode()];
+    final amountFocusNodes = [for (final _ in purchases) FocusNode()];
     DateTime date = DateTime.now();
+
+    double? parseField(String text) =>
+        double.tryParse(text.replaceAll(',', '.'));
+
+    // Montant = actions × prix unitaire is kept as an invariant, since the
+    // real execution price often drifts from the recommendation (market
+    // orders especially) — editing either the price or the total should
+    // update the other rather than leaving the sheet with numbers that
+    // don't actually multiply out.
+    void recomputeCommission(int i) {
+      final amount = parseField(amountControllers[i].text);
+      if (amount == null) return;
+      final commission =
+          (amount * repo.commissionRatePct / 100 * 100).round() / 100;
+      commissionControllers[i].text = commission.toStringAsFixed(2);
+    }
+
+    void recomputeAmountFromPriceOrShares(int i) {
+      final shares = parseField(sharesControllers[i].text);
+      final price = parseField(priceControllers[i].text);
+      if (shares == null || price == null) return;
+      amountControllers[i].text = (shares * price).toStringAsFixed(2);
+      recomputeCommission(i);
+    }
+
+    void recomputePriceFromAmount(int i) {
+      final amount = parseField(amountControllers[i].text);
+      final shares = parseField(sharesControllers[i].text);
+      if (amount == null || shares == null || shares == 0) return;
+      priceControllers[i].text = (amount / shares).toStringAsFixed(2);
+      recomputeCommission(i);
+    }
+
+    for (var i = 0; i < purchases.length; i++) {
+      priceFocusNodes[i].addListener(() {
+        if (!priceFocusNodes[i].hasFocus) recomputeAmountFromPriceOrShares(i);
+      });
+      sharesFocusNodes[i].addListener(() {
+        if (!sharesFocusNodes[i].hasFocus) recomputeAmountFromPriceOrShares(i);
+      });
+      amountFocusNodes[i].addListener(() {
+        if (!amountFocusNodes[i].hasFocus) recomputePriceFromAmount(i);
+      });
+    }
 
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      // Defaults to false, which — per its own doc comment — actively
+      // strips top padding via MediaQuery.removePadding so a SafeArea
+      // *inside* the sheet has no effect at the top edge. That's exactly
+      // why wrapping the content in our own SafeArea didn't stop the
+      // title from sitting under the status bar with several ETFs (sheet
+      // tall enough to reach the top): the framework needs to be told to
+      // keep the sheet itself clear of the top/left/right system
+      // intrusions, not just padded internally.
+      useSafeArea: true,
       builder: (context) {
         return Padding(
           padding: EdgeInsets.only(
             left: 16,
             right: 16,
             top: 16,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+            // Clears the opaque bar pinned over Android's nav bar area (see
+            // the MaterialApp builder in main.dart), same as the +16 used on
+            // every other edge here — not bottomSafePadding's extra +24,
+            // which is tuned for the tail end of a scrolling list (blank
+            // space is unremarkable there) and reads as an oversized gap
+            // right under a single prominent button.
+            bottom:
+                MediaQuery.of(context).viewInsets.bottom +
+                MediaQuery.of(context).padding.bottom +
+                16,
           ),
           child: StatefulBuilder(
             builder: (context, setState) => SingleChildScrollView(
@@ -623,8 +685,10 @@ class _MonthlyPlanCard extends StatelessWidget {
                       purchases[i].etf.name,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: amountControllers[i],
+                      focusNode: amountFocusNodes[i],
                       decoration: const InputDecoration(
                         labelText: 'Montant (€)',
                       ),
@@ -632,8 +696,10 @@ class _MonthlyPlanCard extends StatelessWidget {
                         decimal: true,
                       ),
                     ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: sharesControllers[i],
+                      focusNode: sharesFocusNodes[i],
                       decoration: const InputDecoration(
                         labelText: "Nombre d'actions",
                       ),
@@ -641,8 +707,10 @@ class _MonthlyPlanCard extends StatelessWidget {
                         decimal: true,
                       ),
                     ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: priceControllers[i],
+                      focusNode: priceFocusNodes[i],
                       decoration: const InputDecoration(
                         labelText: 'Prix unitaire (€)',
                       ),
@@ -650,6 +718,7 @@ class _MonthlyPlanCard extends StatelessWidget {
                         decimal: true,
                       ),
                     ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: commissionControllers[i],
                       decoration: const InputDecoration(
@@ -672,6 +741,13 @@ class _MonthlyPlanCard extends StatelessWidget {
         );
       },
     );
+    for (final node in [
+      ...priceFocusNodes,
+      ...sharesFocusNodes,
+      ...amountFocusNodes,
+    ]) {
+      node.dispose();
+    }
 
     if (confirmed == true) {
       for (var i = 0; i < purchases.length; i++) {
