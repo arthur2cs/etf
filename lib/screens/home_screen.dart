@@ -558,189 +558,94 @@ class _MonthlyPlanCard extends StatelessWidget {
     PortfolioRepository repo,
     List<PlannedPurchase> purchases,
   ) async {
-    final amountControllers = [
-      for (final p in purchases)
-        TextEditingController(text: p.amountEur.toStringAsFixed(2)),
-    ];
-    final sharesControllers = [
-      for (final p in purchases)
-        TextEditingController(text: p.shares.toString()),
-    ];
-    final priceControllers = [
-      for (final p in purchases)
-        TextEditingController(text: p.unitPrice.toStringAsFixed(2)),
-    ];
-    final commissionControllers = [
-      for (final p in purchases)
-        TextEditingController(text: p.commissionEur.toStringAsFixed(2)),
-    ];
-    final priceFocusNodes = [for (final _ in purchases) FocusNode()];
-    final sharesFocusNodes = [for (final _ in purchases) FocusNode()];
-    final amountFocusNodes = [for (final _ in purchases) FocusNode()];
-    DateTime date = DateTime.now();
-
-    double? parseField(String text) =>
-        double.tryParse(text.replaceAll(',', '.'));
-
-    // Montant = actions × prix unitaire is kept as an invariant, since the
-    // real execution price often drifts from the recommendation (market
-    // orders especially) — editing either the price or the total should
-    // update the other rather than leaving the sheet with numbers that
-    // don't actually multiply out.
-    void recomputeCommission(int i) {
-      final amount = parseField(amountControllers[i].text);
-      if (amount == null) return;
-      final commission =
-          (amount * repo.commissionRatePct / 100 * 100).round() / 100;
-      commissionControllers[i].text = commission.toStringAsFixed(2);
-    }
-
-    void recomputeAmountFromPriceOrShares(int i) {
-      final shares = parseField(sharesControllers[i].text);
-      final price = parseField(priceControllers[i].text);
-      if (shares == null || price == null) return;
-      amountControllers[i].text = (shares * price).toStringAsFixed(2);
-      recomputeCommission(i);
-    }
-
-    void recomputePriceFromAmount(int i) {
-      final amount = parseField(amountControllers[i].text);
-      final shares = parseField(sharesControllers[i].text);
-      if (amount == null || shares == null || shares == 0) return;
-      priceControllers[i].text = (amount / shares).toStringAsFixed(2);
-      recomputeCommission(i);
-    }
-
-    for (var i = 0; i < purchases.length; i++) {
-      priceFocusNodes[i].addListener(() {
-        if (!priceFocusNodes[i].hasFocus) recomputeAmountFromPriceOrShares(i);
-      });
-      sharesFocusNodes[i].addListener(() {
-        if (!sharesFocusNodes[i].hasFocus) recomputeAmountFromPriceOrShares(i);
-      });
-      amountFocusNodes[i].addListener(() {
-        if (!amountFocusNodes[i].hasFocus) recomputePriceFromAmount(i);
-      });
-    }
-
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      // Defaults to false, which — per its own doc comment — actively
-      // strips top padding via MediaQuery.removePadding so a SafeArea
-      // *inside* the sheet has no effect at the top edge. That's exactly
-      // why wrapping the content in our own SafeArea didn't stop the
-      // title from sitting under the status bar with several ETFs (sheet
-      // tall enough to reach the top): the framework needs to be told to
-      // keep the sheet itself clear of the top/left/right system
-      // intrusions, not just padded internally.
-      useSafeArea: true,
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 16,
-            // Clears the opaque bar pinned over Android's nav bar area (see
-            // the MaterialApp builder in main.dart), same as the +16 used on
-            // every other edge here — not bottomSafePadding's extra +24,
-            // which is tuned for the tail end of a scrolling list (blank
-            // space is unremarkable there) and reads as an oversized gap
-            // right under a single prominent button.
-            bottom:
-                MediaQuery.of(context).viewInsets.bottom +
-                MediaQuery.of(context).padding.bottom +
-                16,
-          ),
-          child: StatefulBuilder(
-            builder: (context, setState) => SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    purchases.length > 1
-                        ? 'Confirmer les transactions'
-                        : 'Confirmer la transaction',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('Date : ${_dateFmt.format(date)}'),
-                    trailing: const Icon(Icons.edit_calendar),
-                    onTap: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: date,
-                        firstDate: DateTime(2000),
-                        lastDate: DateTime.now(),
-                      );
-                      if (picked != null) setState(() => date = picked);
-                    },
-                  ),
-                  for (var i = 0; i < purchases.length; i++) ...[
-                    const Divider(height: 24),
-                    Text(
-                      purchases[i].etf.name,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: amountControllers[i],
-                      focusNode: amountFocusNodes[i],
-                      decoration: const InputDecoration(
-                        labelText: 'Montant (€)',
-                      ),
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: sharesControllers[i],
-                      focusNode: sharesFocusNodes[i],
-                      decoration: const InputDecoration(
-                        labelText: "Nombre d'actions",
-                      ),
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: priceControllers[i],
-                      focusNode: priceFocusNodes[i],
-                      decoration: const InputDecoration(
-                        labelText: 'Prix unitaire (€)',
-                      ),
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: commissionControllers[i],
-                      decoration: const InputDecoration(
-                        labelText: 'Commission (€)',
-                      ),
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text('Enregistrer'),
-                  ),
-                ],
-              ),
-            ),
+    final transactions =
+        await showModalBottomSheet<List<InvestmentTransaction>>(
+          context: context,
+          isScrollControlled: true,
+          // Defaults to false, which — per its own doc comment — actively
+          // strips top padding via MediaQuery.removePadding so a SafeArea
+          // *inside* the sheet has no effect at the top edge. That's exactly
+          // why wrapping the content in our own SafeArea didn't stop the
+          // title from sitting under the status bar with several ETFs (sheet
+          // tall enough to reach the top): the framework needs to be told to
+          // keep the sheet itself clear of the top/left/right system
+          // intrusions, not just padded internally.
+          useSafeArea: true,
+          builder: (context) => _ConfirmTransactionsSheet(
+            purchases: purchases,
+            commissionRatePct: repo.commissionRatePct,
           ),
         );
-      },
-    );
+    if (transactions == null) return;
+    for (final transaction in transactions) {
+      await repo.addTransaction(transaction);
+    }
+  }
+}
+
+/// Bottom sheet for confirming (and correcting) the month's purchases.
+/// Pops with the transactions to record, or null if dismissed.
+///
+/// Owns its controllers and focus nodes so they're disposed only once the
+/// sheet is actually unmounted — disposing them as soon as
+/// showModalBottomSheet's future completed tore them down while the sheet
+/// was still on screen animating out, with its TextFields still attached,
+/// which tripped the framework's `_dependents.isEmpty` assertion.
+class _ConfirmTransactionsSheet extends StatefulWidget {
+  final List<PlannedPurchase> purchases;
+  final double commissionRatePct;
+
+  const _ConfirmTransactionsSheet({
+    required this.purchases,
+    required this.commissionRatePct,
+  });
+
+  @override
+  State<_ConfirmTransactionsSheet> createState() =>
+      _ConfirmTransactionsSheetState();
+}
+
+class _ConfirmTransactionsSheetState extends State<_ConfirmTransactionsSheet> {
+  late final List<PlannedPurchase> purchases = widget.purchases;
+  late final amountControllers = [
+    for (final p in purchases)
+      TextEditingController(text: p.amountEur.toStringAsFixed(2)),
+  ];
+  late final sharesControllers = [
+    for (final p in purchases) TextEditingController(text: p.shares.toString()),
+  ];
+  late final priceControllers = [
+    for (final p in purchases)
+      TextEditingController(text: p.unitPrice.toStringAsFixed(2)),
+  ];
+  late final commissionControllers = [
+    for (final p in purchases)
+      TextEditingController(text: p.commissionEur.toStringAsFixed(2)),
+  ];
+  late final priceFocusNodes = [for (final _ in purchases) FocusNode()];
+  late final sharesFocusNodes = [for (final _ in purchases) FocusNode()];
+  late final amountFocusNodes = [for (final _ in purchases) FocusNode()];
+  DateTime date = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    for (var i = 0; i < purchases.length; i++) {
+      priceFocusNodes[i].addListener(() {
+        if (!priceFocusNodes[i].hasFocus) _recomputeAmountFromPriceOrShares(i);
+      });
+      sharesFocusNodes[i].addListener(() {
+        if (!sharesFocusNodes[i].hasFocus) _recomputeAmountFromPriceOrShares(i);
+      });
+      amountFocusNodes[i].addListener(() {
+        if (!amountFocusNodes[i].hasFocus) _recomputePriceFromAmount(i);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    // Focus nodes first: their blur listeners write into the controllers.
     for (final node in [
       ...priceFocusNodes,
       ...sharesFocusNodes,
@@ -748,35 +653,176 @@ class _MonthlyPlanCard extends StatelessWidget {
     ]) {
       node.dispose();
     }
+    for (final c in [
+      ...amountControllers,
+      ...sharesControllers,
+      ...priceControllers,
+      ...commissionControllers,
+    ]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
 
-    if (confirmed == true) {
-      for (var i = 0; i < purchases.length; i++) {
-        final purchase = purchases[i];
-        final amount =
-            double.tryParse(amountControllers[i].text.replaceAll(',', '.')) ??
-            purchase.amountEur;
-        final shares =
-            double.tryParse(sharesControllers[i].text.replaceAll(',', '.')) ??
-            purchase.shares.toDouble();
-        final price =
-            double.tryParse(priceControllers[i].text.replaceAll(',', '.')) ??
-            purchase.unitPrice;
-        final commission =
-            double.tryParse(
-              commissionControllers[i].text.replaceAll(',', '.'),
-            ) ??
-            purchase.commissionEur;
-        await repo.addTransaction(
-          InvestmentTransaction(
-            date: date,
-            isin: purchase.etf.isin,
-            amountEur: amount,
-            unitPrice: price,
-            shares: shares,
-            commissionEur: commission,
-          ),
-        );
+  double? _parse(TextEditingController c) =>
+      double.tryParse(c.text.replaceAll(',', '.'));
+
+  // Montant = actions × prix unitaire is kept as an invariant, since the
+  // real execution price often drifts from the recommendation (market
+  // orders especially) — editing either the price or the total should
+  // update the other rather than leaving the sheet with numbers that
+  // don't actually multiply out.
+  void _recomputeCommission(int i) {
+    final amount = _parse(amountControllers[i]);
+    if (amount == null) return;
+    final commission =
+        (amount * widget.commissionRatePct / 100 * 100).round() / 100;
+    commissionControllers[i].text = commission.toStringAsFixed(2);
+  }
+
+  void _recomputeAmountFromPriceOrShares(int i) {
+    final shares = _parse(sharesControllers[i]);
+    final price = _parse(priceControllers[i]);
+    if (shares == null || price == null) return;
+    amountControllers[i].text = (shares * price).toStringAsFixed(2);
+    _recomputeCommission(i);
+  }
+
+  void _recomputePriceFromAmount(int i) {
+    final amount = _parse(amountControllers[i]);
+    final shares = _parse(sharesControllers[i]);
+    if (amount == null || shares == null || shares == 0) return;
+    priceControllers[i].text = (amount / shares).toStringAsFixed(2);
+    _recomputeCommission(i);
+  }
+
+  /// Applies the pending recompute of whichever field is still focused —
+  /// its blur listener would only run after the sheet already popped.
+  void _commitFocusedField() {
+    for (var i = 0; i < purchases.length; i++) {
+      if (priceFocusNodes[i].hasFocus || sharesFocusNodes[i].hasFocus) {
+        _recomputeAmountFromPriceOrShares(i);
+      } else if (amountFocusNodes[i].hasFocus) {
+        _recomputePriceFromAmount(i);
       }
     }
+  }
+
+  List<InvestmentTransaction> _transactions() {
+    _commitFocusedField();
+    return [
+      for (var i = 0; i < purchases.length; i++)
+        InvestmentTransaction(
+          date: date,
+          isin: purchases[i].etf.isin,
+          amountEur: _parse(amountControllers[i]) ?? purchases[i].amountEur,
+          unitPrice: _parse(priceControllers[i]) ?? purchases[i].unitPrice,
+          shares:
+              _parse(sharesControllers[i]) ?? purchases[i].shares.toDouble(),
+          commissionEur:
+              _parse(commissionControllers[i]) ?? purchases[i].commissionEur,
+        ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        // Clears the opaque bar pinned over Android's nav bar area (see
+        // the MaterialApp builder in main.dart), same as the +16 used on
+        // every other edge here — not bottomSafePadding's extra +24,
+        // which is tuned for the tail end of a scrolling list (blank
+        // space is unremarkable there) and reads as an oversized gap
+        // right under a single prominent button.
+        bottom:
+            MediaQuery.of(context).viewInsets.bottom +
+            MediaQuery.of(context).padding.bottom +
+            16,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              purchases.length > 1
+                  ? 'Confirmer les transactions'
+                  : 'Confirmer la transaction',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('Date : ${_dateFmt.format(date)}'),
+              trailing: const Icon(Icons.edit_calendar),
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: date,
+                  firstDate: DateTime(2000),
+                  lastDate: DateTime.now(),
+                );
+                if (picked != null) setState(() => date = picked);
+              },
+            ),
+            for (var i = 0; i < purchases.length; i++) ...[
+              const Divider(height: 24),
+              Text(
+                purchases[i].etf.name,
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: amountControllers[i],
+                focusNode: amountFocusNodes[i],
+                decoration: const InputDecoration(labelText: 'Montant (€)'),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: sharesControllers[i],
+                focusNode: sharesFocusNodes[i],
+                decoration: const InputDecoration(
+                  labelText: "Nombre d'actions",
+                ),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: priceControllers[i],
+                focusNode: priceFocusNodes[i],
+                decoration: const InputDecoration(
+                  labelText: 'Prix unitaire (€)',
+                ),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: commissionControllers[i],
+                decoration: const InputDecoration(labelText: 'Commission (€)'),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(_transactions()),
+              child: const Text('Enregistrer'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
