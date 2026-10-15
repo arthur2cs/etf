@@ -285,29 +285,16 @@ class _HistoryChartState extends State<_HistoryChart> {
   Set<int> _monthsWithTransaction() =>
       widget.transactions.map((t) => _monthIndex(t.date)).toSet();
 
-  /// Same idea as [_monthsWithTransaction], one entry per calendar year.
-  Set<int> _yearsWithTransaction() =>
-      widget.transactions.map((t) => t.date.year).toSet();
-
-  /// Same idea as [_monthlyCumulative], one point per calendar year.
-  List<MapEntry<int, double>> _yearlyCumulative() {
-    final sorted = [...widget.transactions]
-      ..sort((a, b) => a.date.compareTo(b.date));
-    final startYear = sorted.first.date.year;
-    final endYear = math.max(startYear, DateTime.now().year);
-
-    final byYear = <int, double>{};
-    for (final t in sorted) {
-      byYear[t.date.year] = (byYear[t.date.year] ?? 0) + t.amountEur;
-    }
-
-    var running = 0.0;
-    final result = <MapEntry<int, double>>[];
-    for (var y = startYear; y <= endYear; y++) {
-      running += byYear[y] ?? 0;
-      result.add(MapEntry(y, running));
-    }
-    return result;
+  /// Tooltip for one month's point, shared by both chart views.
+  String _monthTooltip(int monthIdx, double cumulative) {
+    final label = '${_monthAbbr[monthIdx % 12]} ${monthIdx ~/ 12}';
+    final monthAmount = widget.transactions
+        .where((t) => _monthIndex(t.date) == monthIdx)
+        .fold<double>(0, (sum, t) => sum + t.amountEur);
+    return monthAmount > 0
+        ? '$label\n${_eur.format(cumulative)} cumulé\n'
+              '+${_eur.format(monthAmount)} ce mois-ci'
+        : '$label\n${_eur.format(cumulative)} cumulé';
   }
 
   static const _niceSteps = [
@@ -417,25 +404,21 @@ class _HistoryChartState extends State<_HistoryChart> {
     );
   }
 
-  static const _xAxisHeadroomFraction = 0.04;
-
-  /// Right edge of the year chart's X axis: a constant fraction of the
-  /// axis's own width held back past the last (current) year, so it stays
-  /// discreet regardless of how many years of data exist — a fixed
-  /// data-unit margin (like month's) would look disproportionately large
-  /// with only a couple of years. Same idea as [_niceYAxis]'s headroom.
-  double _yearAxisMaxX(int topIndex) {
-    if (topIndex <= 0) return 0.4;
-    return topIndex / (1 - _xAxisHeadroomFraction);
-  }
-
+  /// The whole history's monthly curve on one chart, with the X axis in
+  /// years (x = years since January of the first year) — same points as
+  /// the month view, just packed closer together instead of one page per
+  /// year.
   Widget _buildYearChart(BuildContext context) {
-    final entries = _yearlyCumulative();
+    final years = _years();
+    final firstMonthIdx = years.first * 12;
+    final cumulative = _monthlyCumulative();
+    final monthIdxs = cumulative.keys.toList()..sort();
     final spots = [
-      for (var i = 0; i < entries.length; i++)
-        FlSpot(i.toDouble(), entries[i].value),
+      for (final idx in monthIdxs)
+        FlSpot((idx - firstMonthIdx) / 12, cumulative[idx]!),
     ];
-    final investedYears = _yearsWithTransaction();
+    int monthIdxAt(double x) => firstMonthIdx + (x * 12).round();
+    final investedMonths = _monthsWithTransaction();
     final maxY = spots.map((s) => s.y).fold<double>(0, math.max);
     final yAxis = _niceYAxis(maxY);
     final pinned =
@@ -450,7 +433,7 @@ class _HistoryChartState extends State<_HistoryChart> {
       dotData: FlDotData(
         show: true,
         checkToShowDot: (spot, bar) =>
-            investedYears.contains(entries[spot.x.round()].key),
+            investedMonths.contains(monthIdxAt(spot.x)),
       ),
       showingIndicators: pinned == null ? const [] : [pinned],
     );
@@ -461,10 +444,13 @@ class _HistoryChartState extends State<_HistoryChart> {
       chart: LineChart(
         LineChartData(
           minX: 0,
-          maxX: _yearAxisMaxX(entries.length - 1),
+          // Through the end of the last year, so each year's label at its
+          // January gridline has that whole year's span to its right.
+          maxX: years.length.toDouble(),
           minY: 0,
           maxY: yAxis.maxY,
-          gridData: const FlGridData(show: true),
+          // One vertical gridline per January, matching the year labels.
+          gridData: const FlGridData(show: true, verticalInterval: 1),
           titlesData: FlTitlesData(
             topTitles: const AxisTitles(
               sideTitles: SideTitles(showTitles: false),
@@ -482,13 +468,13 @@ class _HistoryChartState extends State<_HistoryChart> {
                 maxIncluded: false,
                 getTitlesWidget: (value, meta) {
                   final idx = value.round();
-                  if (idx < 0 || idx >= entries.length) {
+                  if (idx < 0 || idx >= years.length) {
                     return const SizedBox.shrink();
                   }
                   return Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      '${entries[idx].key}',
+                      '${years[idx]}',
                       style: const TextStyle(fontSize: 10),
                     ),
                   );
@@ -530,15 +516,17 @@ class _HistoryChartState extends State<_HistoryChart> {
             touchTooltipData: LineTouchTooltipData(
               fitInsideVertically: true,
               fitInsideHorizontally: true,
-              getTooltipItems: (touchedSpots) => touchedSpots.map((spot) {
-                final idx = spot.x.round();
-                if (idx < 0 || idx >= entries.length) return null;
-                final year = entries[idx].key;
-                return LineTooltipItem(
-                  '$year\n${_eur.format(spot.y)} cumulé',
-                  const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-                );
-              }).toList(),
+              getTooltipItems: (touchedSpots) => touchedSpots
+                  .map(
+                    (spot) => LineTooltipItem(
+                      _monthTooltip(monthIdxAt(spot.x), spot.y),
+                      const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  )
+                  .toList(),
             ),
           ),
           showingTooltipIndicators: pinned == null
@@ -693,24 +681,17 @@ class _HistoryChartState extends State<_HistoryChart> {
                 touchTooltipData: LineTouchTooltipData(
                   fitInsideVertically: true,
                   fitInsideHorizontally: true,
-                  getTooltipItems: (touchedSpots) => touchedSpots.map((spot) {
-                    final m = spot.x.round();
-                    final monthIdx = year * 12 + m;
-                    final monthAmount = widget.transactions
-                        .where((t) => _monthIndex(t.date) == monthIdx)
-                        .fold<double>(0, (sum, t) => sum + t.amountEur);
-                    final text = monthAmount > 0
-                        ? '${_monthAbbr[m]} $year\n${_eur.format(spot.y)} cumulé\n'
-                              '+${_eur.format(monthAmount)} ce mois-ci'
-                        : '${_monthAbbr[m]} $year\n${_eur.format(spot.y)} cumulé';
-                    return LineTooltipItem(
-                      text,
-                      const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    );
-                  }).toList(),
+                  getTooltipItems: (touchedSpots) => touchedSpots
+                      .map(
+                        (spot) => LineTooltipItem(
+                          _monthTooltip(year * 12 + spot.x.round(), spot.y),
+                          const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      )
+                      .toList(),
                 ),
               ),
               showingTooltipIndicators: pinned == null
