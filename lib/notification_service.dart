@@ -4,7 +4,17 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+/// First id of the reminder series — see [NotificationService.scheduleReminder].
+/// Starts at 1 so the single daily-repeating reminder armed by older builds
+/// (which used id 1) gets cancelled along with the rest of the series.
 const int reminderNotificationId = 1;
+
+/// How many consecutive daily reminders are armed ahead of time. Each one
+/// is a plain one-shot alarm, so the nag keeps going for this many days
+/// even if the app is never opened; every app open/resume re-arms a fresh
+/// series anyway, so this only needs to outlast a long stretch of ignoring
+/// it.
+const int reminderSeriesLength = 62;
 
 // v2: bumped importance to max and renamed the channel so a stale, less
 // prominent channel created by an earlier build (Android channels can't be
@@ -18,10 +28,10 @@ const _channelId = 'invest_reminder_channel_v2';
 final GlobalKey<NavigatorState> notificationNavigatorKey =
     GlobalKey<NavigatorState>();
 
-/// Schedules the monthly investing reminder. It fires once on the
-/// configured day of the month, then repeats every day at the same time
-/// (native scheduling, works even if the app is closed) until the month's
-/// plan is complete, at which point it's rescheduled for next month's day.
+/// Schedules the monthly investing reminder. It fires on the configured day
+/// of the month, then again every day at the same time (native scheduling,
+/// works even if the app is closed) until the month's plan is complete, at
+/// which point it's rescheduled for next month's day.
 class NotificationService {
   NotificationService._();
   static final NotificationService instance = NotificationService._();
@@ -188,26 +198,21 @@ class NotificationService {
     return candidate;
   }
 
-  /// Whether [scheduledDate] is "today or tomorrow at hour:minute" — i.e.
-  /// exactly what flutter_local_notifications' own
-  /// getNextFireDateMatchingDateTimeComponents would compute anyway, so
-  /// handing it matchDateTimeComponents doesn't silently pull a further-out
-  /// date back to today (see the comment in [scheduleReminder]).
-  bool _isImminent(tz.TZDateTime scheduledDate, int hour, int minute) {
-    final now = tz.TZDateTime.now(tz.local);
-    var nextTimeOccurrence = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      hour,
-      minute,
-    );
-    if (nextTimeOccurrence.isBefore(now)) {
-      nextTimeOccurrence = nextTimeOccurrence.add(const Duration(days: 1));
-    }
-    return !scheduledDate.isAfter(nextTimeOccurrence);
-  }
+  /// The [count] consecutive daily occurrences of [first]'s time of day,
+  /// starting at [first] itself. Built from calendar fields rather than by
+  /// adding 24h durations, so the wall-clock time stays put across DST
+  /// changes.
+  List<tz.TZDateTime> dailySeries(tz.TZDateTime first, int count) => [
+    for (var i = 0; i < count; i++)
+      tz.TZDateTime(
+        tz.local,
+        first.year,
+        first.month,
+        first.day + i,
+        first.hour,
+        first.minute,
+      ),
+  ];
 
   tz.TZDateTime _clampedDate(
     int year,
@@ -227,19 +232,21 @@ class NotificationService {
     );
   }
 
-  NotificationDetails _reminderDetails() => const NotificationDetails(
-    android: AndroidNotificationDetails(
-      _channelId,
-      'Rappels d\'investissement',
-      channelDescription: 'Rappelle d\'investir dans ton ETF',
-      importance: Importance.max,
-      priority: Priority.max,
-      category: AndroidNotificationCategory.reminder,
-      visibility: NotificationVisibility.public,
-    ),
-    iOS: DarwinNotificationDetails(),
-    macOS: DarwinNotificationDetails(),
-  );
+  NotificationDetails _reminderDetails({Duration? timeout}) =>
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelId,
+          'Rappels d\'investissement',
+          channelDescription: 'Rappelle d\'investir dans ton ETF',
+          importance: Importance.max,
+          priority: Priority.max,
+          category: AndroidNotificationCategory.reminder,
+          visibility: NotificationVisibility.public,
+          timeoutAfter: timeout?.inMilliseconds,
+        ),
+        iOS: const DarwinNotificationDetails(),
+        macOS: const DarwinNotificationDetails(),
+      );
 
   /// Shows a notification right away, bypassing the day/month scheduling —
   /// for checking permissions, heads-up display and tap-to-home actually
@@ -254,15 +261,25 @@ class NotificationService {
     );
   }
 
+  /// Serializes [scheduleReminder]/[cancelReminder]: they're triggered on
+  /// every repository change and app resume, and two interleaved runs could
+  /// otherwise leave a mix of both series armed.
+  Future<void> _queue = Future.value();
+
+  Future<void> _enqueue(Future<void> Function() task) =>
+      _queue = _queue.then((_) => task()).catchError((Object e) {
+        debugPrint('[NotificationService] reminder sync failed: $e');
+      });
+
   Future<void> scheduleReminder({
     required int dayOfMonth,
     required int hour,
     required int minute,
     required bool alreadyDoneThisMonth,
-  }) async {
-    await _plugin.cancel(id: reminderNotificationId);
+  }) => _enqueue(() async {
+    await _cancelSeries();
 
-    final scheduledDate = nextOccurrence(
+    final first = nextOccurrence(
       dayOfMonth: dayOfMonth,
       hour: hour,
       minute: minute,
@@ -270,60 +287,44 @@ class NotificationService {
     );
 
     debugPrint(
-      '[NotificationService] scheduling reminder id=$reminderNotificationId '
-      'now=${tz.TZDateTime.now(tz.local)} target=$scheduledDate '
+      '[NotificationService] scheduling $reminderSeriesLength daily reminders '
+      'now=${tz.TZDateTime.now(tz.local)} first=$first '
       'alreadyDone=$alreadyDoneThisMonth',
     );
 
-    try {
+    // One plain one-shot alarm per day rather than a single daily-repeating
+    // one: flutter_local_notifications' matchDateTimeComponents throws away
+    // the requested date and re-anchors to "today/tomorrow" (confirmed via
+    // `adb shell dumpsys alarm`), so it can't start a repeat at a future
+    // date — and a lone one-shot on the reminder day only ever fired once:
+    // swiping it away left nothing armed for the next day unless the app
+    // happened to be opened in between.
+    final series = dailySeries(first, reminderSeriesLength);
+    for (var i = 0; i < series.length; i++) {
       await _plugin.zonedSchedule(
-        id: reminderNotificationId,
+        id: reminderNotificationId + i,
         title: 'Il est temps d\'investir 💰',
         body:
             'Ouvre l\'appli pour voir le montant exact à virer sur ton PEA ce mois-ci.',
-        scheduledDate: scheduledDate,
-        notificationDetails: _reminderDetails(),
+        scheduledDate: series[i],
+        // Each day's reminder clears itself just before the next one shows
+        // up, so ignored reminders don't pile up in the tray.
+        notificationDetails: _reminderDetails(
+          timeout: const Duration(hours: 23, minutes: 50),
+        ),
         // Inexact is plenty precise for a daily reminder banner, and avoids
         // requesting Android's exact-alarm permission (SCHEDULE_EXACT_ALARM)
         // for no real benefit — it still fires via AllowWhileIdle even in Doze.
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        // Repeats daily at the same time, starting from scheduledDate —
-        // this is what turns the monthly reminder into a daily nag once
-        // it's actually due.
-        //
-        // Only safe to set once `scheduledDate` IS today/tomorrow (i.e.
-        // the plan isn't done — we're already in the nag window):
-        // flutter_local_notifications' Android side, whenever
-        // matchDateTimeComponents is non-null, throws away the *date* we
-        // pass and recomputes "the next occurrence of this time-of-day
-        // from right now" (see getNextFireDateMatchingDateTimeComponents
-        // in FlutterLocalNotificationsPlugin.java) — so a genuinely future
-        // scheduledDate (next month, once done) would silently collapse
-        // to today/tomorrow and fire immediately instead of waiting.
-        // Confirmed on-device via `adb shell dumpsys alarm`: the armed
-        // alarm's origWhen was today 19:00 even though this method's own
-        // debug log said target=next month.
-        //
-        // So whenever `scheduledDate` is further out than today/tomorrow —
-        // done, waiting for next month, *or* not done but the reminder day
-        // hasn't arrived yet this month — schedule a plain one-shot for
-        // the real future date instead (no repeat metadata at all). It
-        // fires exactly once when that date arrives, and _syncReminder
-        // (main.dart, on every app open/resume) takes over from there to
-        // arm the daily repeat once we're actually in the nag window.
-        matchDateTimeComponents: _isImminent(scheduledDate, hour, minute)
-            ? DateTimeComponents.time
-            : null,
       );
-      debugPrint(
-        '[NotificationService] zonedSchedule call returned without throwing.',
-      );
-    } catch (e) {
-      debugPrint('[NotificationService] zonedSchedule threw: $e');
     }
-  }
+  });
 
-  Future<void> cancelReminder() async {
-    await _plugin.cancel(id: reminderNotificationId);
+  Future<void> cancelReminder() => _enqueue(_cancelSeries);
+
+  Future<void> _cancelSeries() async {
+    for (var i = 0; i < reminderSeriesLength; i++) {
+      await _plugin.cancel(id: reminderNotificationId + i);
+    }
   }
 }

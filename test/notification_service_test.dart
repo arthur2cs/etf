@@ -58,4 +58,23 @@ void main() {
     expect(next.month, expectedMonth);
     expect(next.isAfter(now), isTrue);
   });
+
+  test('daily series: one reminder per day at the same wall-clock time, '
+      'even across a DST change', () {
+    // Europe/Paris switches back to winter time on 2026-10-25.
+    final first = tz.TZDateTime(tz.local, 2026, 10, 23, 19, 0);
+
+    final series = service.dailySeries(first, 5);
+
+    expect(series.map((d) => d.day), [23, 24, 25, 26, 27]);
+    expect(series.every((d) => d.hour == 19 && d.minute == 0), isTrue);
+  });
+
+  test('daily series rolls over month ends', () {
+    final first = tz.TZDateTime(tz.local, 2026, 2, 27, 19, 0);
+
+    final series = service.dailySeries(first, 3);
+
+    expect(series.map((d) => '${d.month}/${d.day}'), ['2/27', '2/28', '3/1']);
+  });
 }
