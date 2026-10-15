@@ -425,6 +425,73 @@ class _PieChartCard extends StatelessWidget {
   }
 }
 
+/// One ETF's order in the monthly plan: the ETF name, then how many shares
+/// at what price, then the total with its commission — set off by an accent
+/// bar rather than run together into a sentence.
+class _PurchaseSection extends StatelessWidget {
+  final PlannedPurchase purchase;
+  final Color color;
+  const _PurchaseSection({required this.purchase, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.textTheme.bodyMedium?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    final shares = purchase.shares;
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(left: 12),
+      decoration: BoxDecoration(
+        border: Border(left: BorderSide(color: color, width: 3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            purchase.etf.name,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '$shares action${shares > 1 ? 's' : ''}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                TextSpan(text: ' à ${_eur.format(purchase.unitPrice)}'),
+              ],
+            ),
+            style: theme.textTheme.bodyLarge,
+          ),
+          const SizedBox(height: 2),
+          Text.rich(
+            TextSpan(
+              children: [
+                const TextSpan(text: 'Total '),
+                TextSpan(
+                  text: _eur.format(purchase.amountEur),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                TextSpan(
+                  text:
+                      '  (+ ${_eur.format(purchase.commissionEur)} de commission)',
+                  style: muted,
+                ),
+              ],
+            ),
+            style: theme.textTheme.bodyLarge,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MonthlyPlanCard extends StatelessWidget {
   final PortfolioRepository repo;
   const _MonthlyPlanCard({required this.repo});
@@ -517,19 +584,20 @@ class _MonthlyPlanCard extends StatelessWidget {
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
+            const SizedBox(height: 4),
             for (final purchase in plan.purchases)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  'Achète ${purchase.shares} action(s) de ${purchase.etf.name} pour '
-                  '${_eur.format(purchase.amountEur)} (+ ${_eur.format(purchase.commissionEur)} de '
-                  'commission, prix unitaire ${_eur.format(purchase.unitPrice)}).',
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
+              _PurchaseSection(
+                purchase: purchase,
+                // Same color as this ETF's slice in the pie chart above.
+                color:
+                    _palette[repo.etfs.indexWhere(
+                          (e) => e.isin == purchase.etf.isin,
+                        ) %
+                        _palette.length],
               ),
             if (plan.unallocatedEur >= 1)
               Padding(
-                padding: const EdgeInsets.only(top: 4, bottom: 8),
+                padding: const EdgeInsets.only(top: 12),
                 child: Text(
                   '${_eur.format(plan.unallocatedEur)} restent non alloués ce mois-ci '
                   '(insuffisant pour un ordre supplémentaire).',
